@@ -37,6 +37,7 @@ export class AgentConnectConnect extends HTMLElement {
   private localConfig: LocalProviderConfig;
   private prefetching: boolean;
   private busy: boolean;
+  private busyMessage: string | null;
   private elements: ConnectComponentElements | null;
   private handleResize: () => void;
   private loginPollTimer: ReturnType<typeof setInterval> | null;
@@ -49,6 +50,7 @@ export class AgentConnectConnect extends HTMLElement {
     this.localConfig = readLocalConfig(this.localConfigKey);
     this.prefetching = false;
     this.busy = false;
+    this.busyMessage = null;
     this.elements = null;
     this.loginPollTimer = null;
     this.handleResize = () => {
@@ -128,6 +130,8 @@ export class AgentConnectConnect extends HTMLElement {
       localKeyInput: root.querySelector('.ac-local-key'),
       localModelsInput: root.querySelector('.ac-local-models'),
       popoverTitle: root.querySelector('.ac-popover-title'),
+      progressWrap: root.querySelector('.ac-progress'),
+      progressLabel: root.querySelector('.ac-progress-label'),
     };
   }
 
@@ -604,10 +608,11 @@ export class AgentConnectConnect extends HTMLElement {
   private async connectProvider(provider: ProviderInfo): Promise<void> {
     if (this.busy) return;
     this.setAlert(null);
-    this.setBusy(true);
-    this.setProviderLoading(provider.id, true);
+    const providerName = provider.name || provider.id;
+    this.setBusy(true, `Connecting to ${providerName}...`);
+    this.setProviderLoading(provider.id, true, 'Connecting...');
     try {
-      const ready = await this.ensureProviderReady(provider);
+      const ready = await this.ensureProviderReady(provider, providerName);
       if (!ready) return;
       this.state.selectedProvider = provider.id;
       await this.refreshModels();
@@ -633,7 +638,7 @@ export class AgentConnectConnect extends HTMLElement {
     }
   }
 
-  private setProviderLoading(providerId: ProviderId, loading: boolean): void {
+  private setProviderLoading(providerId: ProviderId, loading: boolean, label = 'Working...'): void {
     const card = this.elements?.providerList?.querySelector(
       `.ac-provider-card[data-provider="${providerId}"]`
     );
@@ -644,7 +649,7 @@ export class AgentConnectConnect extends HTMLElement {
       if (loading) {
         button.classList.add('loading');
         button.dataset.originalText = button.textContent || '';
-        button.textContent = 'Installing...';
+        button.textContent = label;
       } else {
         button.classList.remove('loading');
         if (button.dataset.originalText) {
@@ -654,11 +659,13 @@ export class AgentConnectConnect extends HTMLElement {
     }
   }
 
-  private async ensureProviderReady(provider: ProviderInfo): Promise<boolean> {
+  private async ensureProviderReady(provider: ProviderInfo, providerName: string): Promise<boolean> {
     const client = await getClient();
     let needsLogin = !provider.loggedIn;
 
     if (!provider.installed) {
+      this.setBusy(true, `Installing ${providerName} CLI...`);
+      this.setProviderLoading(provider.id, true, 'Installing...');
       const installed = await client.providers.ensureInstalled(provider.id);
       if (!installed.installed) {
         const pmInfo = installed.packageManager
@@ -682,6 +689,8 @@ export class AgentConnectConnect extends HTMLElement {
     }
 
     if (needsLogin) {
+      this.setBusy(true, `Waiting for ${providerName} login...`);
+      this.setProviderLoading(provider.id, true, 'Logging in...');
       const loginOptions =
         provider.id === 'claude' && this.state.loginExperience
           ? { loginExperience: this.state.loginExperience }
@@ -1058,7 +1067,22 @@ export class AgentConnectConnect extends HTMLElement {
     }
   }
 
-  private setBusy(isBusy: boolean): void {
+  private setBusy(isBusy: boolean, message?: string | null): void {
     this.busy = Boolean(isBusy);
+    if (message !== undefined) {
+      this.busyMessage = message ?? null;
+    }
+    if (!this.elements) return;
+    const { connectPanel, progressWrap, progressLabel } = this.elements;
+    if (!connectPanel || !progressWrap || !progressLabel) return;
+    if (this.busy) {
+      connectPanel.dataset.busy = 'true';
+      progressWrap.hidden = false;
+      progressLabel.textContent = this.busyMessage || 'Working...';
+    } else {
+      connectPanel.removeAttribute('data-busy');
+      progressWrap.hidden = true;
+      progressLabel.textContent = '';
+    }
   }
 }

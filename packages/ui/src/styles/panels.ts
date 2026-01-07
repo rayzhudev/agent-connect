@@ -82,6 +82,30 @@ export const panelStyles = `
     text-transform: uppercase;
     letter-spacing: 0.14em;
   }
+  .ac-progress {
+    display: grid;
+    gap: 8px;
+  }
+  .ac-progress[hidden] {
+    display: none;
+  }
+  .ac-progress-track {
+    height: 6px;
+    border-radius: 999px;
+    background: rgba(200, 170, 90, 0.2);
+    overflow: hidden;
+  }
+  .ac-progress-bar {
+    height: 100%;
+    width: 35%;
+    border-radius: 999px;
+    background: var(--ac-accent, #c4542a);
+    animation: ac-progress 1.2s ease-in-out infinite;
+  }
+  .ac-progress-label {
+    font-size: 12px;
+    color: var(--ac-muted, #556070);
+  }
   .ac-popover-title {
     font-size: 16px;
     font-weight: 700;
@@ -141,5 +165,21 @@ export const panelStyles = `
   .ac-overlay.open {
     opacity: 1;
     pointer-events: auto;
+  }
+  .ac-panel[data-busy="true"] .ac-section {
+    pointer-events: none;
+    opacity: 0.55;
+  }
+
+  @keyframes ac-progress {
+    0% {
+      transform: translateX(-120%);
+    }
+    50% {
+      transform: translateX(40%);
+    }
+    100% {
+      transform: translateX(180%);
+    }
   }
 `;

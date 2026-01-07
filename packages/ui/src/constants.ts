@@ -76,6 +76,12 @@ export const CONNECT_TEMPLATE = `
         </div>
         <button class="ac-button ghost ac-close" type="button" aria-label="Close">&times;</button>
       </div>
+      <div class="ac-progress" hidden>
+        <div class="ac-progress-track">
+          <div class="ac-progress-bar"></div>
+        </div>
+        <div class="ac-progress-label" aria-live="polite"></div>
+      </div>
       <div class="ac-section">
         <div class="ac-provider-list"></div>
       </div>

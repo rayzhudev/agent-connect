@@ -97,6 +97,8 @@ export interface ConnectComponentElements {
   localKeyInput: HTMLInputElement | null;
   localModelsInput: HTMLInputElement | null;
   popoverTitle: HTMLDivElement | null;
+  progressWrap: HTMLDivElement | null;
+  progressLabel: HTMLDivElement | null;
 }
 
 /**

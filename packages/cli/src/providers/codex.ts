@@ -14,6 +14,7 @@ import {
   checkCommandVersion,
   commandExists,
   createLineParser,
+  debugLog,
   resolveWindowsCommand,
   resolveCommandPath,
   runCommand,
@@ -25,6 +26,13 @@ const DEFAULT_STATUS = 'codex login status';
 const CODEX_MODELS_CACHE_TTL_MS = 60_000;
 let codexModelsCache: ModelInfo[] | null = null;
 let codexModelsCacheAt = 0;
+
+function trimOutput(value: string, limit = 400): string {
+  const cleaned = value.trim();
+  if (!cleaned) return '';
+  if (cleaned.length <= limit) return cleaned;
+  return `${cleaned.slice(0, limit)}...`;
+}
 
 export function getCodexCommand(): string {
   const override = process.env.AGENTCONNECT_CODEX_COMMAND;
@@ -48,7 +56,14 @@ export async function ensureCodexInstalled(): Promise<InstallResult> {
     return { installed: false, version: undefined, packageManager: install.packageManager };
   }
 
-  await runCommand(install.command, install.args, { shell: process.platform === 'win32' });
+  debugLog('Codex', 'install', { command: install.command, args: install.args });
+  const installResult = await runCommand(install.command, install.args, {
+    shell: process.platform === 'win32',
+  });
+  debugLog('Codex', 'install-result', {
+    code: installResult.code,
+    stderr: trimOutput(installResult.stderr),
+  });
   const after = await checkCommandVersion(command, [['--version'], ['-V']]);
   // Invalidate models cache after installation so fresh models are fetched
   codexModelsCache = null;
@@ -85,7 +100,9 @@ export async function loginCodex(): Promise<{ loggedIn: boolean }> {
   }
 
   const command = resolveWindowsCommand(login.command);
-  await runCommand(command, login.args, { env: { ...process.env, CI: '1' } });
+  debugLog('Codex', 'login', { command, args: login.args });
+  const result = await runCommand(command, login.args, { env: { ...process.env, CI: '1' } });
+  debugLog('Codex', 'login-result', { code: result.code, stderr: trimOutput(result.stderr) });
   const status = await getCodexStatus();
   codexModelsCache = null;
   codexModelsCacheAt = 0;
@@ -461,6 +478,12 @@ export function runCodexPrompt({
     }
     args.push(prompt);
 
+    const argsPreview = [...args];
+    if (argsPreview.length > 0) {
+      argsPreview[argsPreview.length - 1] = '[prompt]';
+    }
+    debugLog('Codex', 'spawn', { command, args: argsPreview, cwd: repoRoot || '.' });
+
     const child = spawn(command, args, {
       cwd: repoRoot,
       env: { ...process.env },
@@ -476,10 +499,24 @@ export function runCodexPrompt({
     let aggregated = '';
     let finalSessionId: string | null = null;
     let didFinalize = false;
+    const stdoutLines: string[] = [];
+    const stderrLines: string[] = [];
+    const pushLine = (list: string[], line: string): void => {
+      if (!line) return;
+      list.push(line);
+      if (list.length > 12) list.shift();
+    };
 
-    const handleLine = (line: string): void => {
+    const handleLine = (line: string, source: 'stdout' | 'stderr'): void => {
       const parsed = safeJsonParse(line);
-      if (!parsed || typeof parsed !== 'object') return;
+      if (!parsed || typeof parsed !== 'object') {
+        if (source === 'stdout') {
+          pushLine(stdoutLines, line);
+        } else {
+          pushLine(stderrLines, line);
+        }
+        return;
+      }
       const ev = parsed as CodexEvent;
       const normalized = normalizeEvent(ev);
       const sid = extractSessionId(ev);
@@ -525,8 +562,8 @@ export function runCodexPrompt({
       }
     };
 
-    const stdoutParser = createLineParser(handleLine);
-    const stderrParser = createLineParser(handleLine);
+    const stdoutParser = createLineParser((line) => handleLine(line, 'stdout'));
+    const stderrParser = createLineParser((line) => handleLine(line, 'stderr'));
 
     child.stdout?.on('data', stdoutParser);
     child.stderr?.on('data', stderrParser);
@@ -534,7 +571,14 @@ export function runCodexPrompt({
     child.on('close', (code) => {
       if (!didFinalize) {
         if (code && code !== 0) {
-          onEvent({ type: 'error', message: `Codex exited with code ${code}` });
+          const hint = stderrLines.at(-1) || stdoutLines.at(-1) || '';
+          const suffix = hint ? `: ${hint}` : '';
+          debugLog('Codex', 'exit', {
+            code,
+            stderr: stderrLines,
+            stdout: stdoutLines,
+          });
+          onEvent({ type: 'error', message: `Codex exited with code ${code}${suffix}` });
         } else {
           onEvent({ type: 'final', text: aggregated });
         }
@@ -543,6 +587,7 @@ export function runCodexPrompt({
     });
 
     child.on('error', (err: Error) => {
+      debugLog('Codex', 'spawn-error', { message: err?.message });
       onEvent({ type: 'error', message: err?.message ?? 'Codex failed to start' });
       resolve({ sessionId: finalSessionId });
     });

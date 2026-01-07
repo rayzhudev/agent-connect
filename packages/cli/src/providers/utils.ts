@@ -4,6 +4,25 @@ import os from 'os';
 import path from 'path';
 import type { CommandResult } from '../types.js';
 
+const DEBUG_ENABLED = Boolean(process.env.AGENTCONNECT_DEBUG?.trim());
+
+export function debugLog(
+  scope: string,
+  message: string,
+  details?: Record<string, unknown>
+): void {
+  if (!DEBUG_ENABLED) return;
+  let suffix = '';
+  if (details) {
+    try {
+      suffix = ` ${JSON.stringify(details)}`;
+    } catch {
+      suffix = '';
+    }
+  }
+  console.log(`[AgentConnect][${scope}] ${message}${suffix}`);
+}
+
 export interface SplitCommandResult {
   command: string;
   args: string[];
