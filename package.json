@@ -1,0 +1,29 @@
+{
+  "name": "agentconnect",
+  "private": true,
+  "type": "module",
+  "packageManager": "bun@1.1.0",
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
+  "scripts": {
+    "new:app": "bun scripts/new-app.mjs",
+    "dev:host": "bun ./packages/cli/src/index.ts dev",
+    "test:smoke": "bun tests/smoke.mjs",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
+    "format": "prettier --write .",
+    "format:check": "prettier --check ."
+  },
+  "devDependencies": {
+    "@typescript-eslint/eslint-plugin": "^8",
+    "@typescript-eslint/parser": "^8",
+    "eslint": "^9",
+    "eslint-config-prettier": "^9",
+    "eslint-plugin-prettier": "^5",
+    "globals": "^17.0.0",
+    "prettier": "^3",
+    "ws": "^8.19.0"
+  }
+}

@@ -1,0 +1,430 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>__APP_NAME__</title>
+    <style>
+      @import url('https://fonts.googleapis.com/css2?family=Fraunces:wght@500;700&family=Manrope:wght@400;500;600;700&display=swap');
+
+      :root {
+        color-scheme: light;
+        font-family: 'Manrope', sans-serif;
+        background: #f4ede3;
+        color: #1b140e;
+        --ink: #1b140e;
+        --muted: #5c4c3d;
+        --accent: #c4542a;
+        --accent-dark: #8d3b1d;
+        --accent-soft: #f3c6b2;
+        --sea: #1a6f67;
+        --panel: #fff8ef;
+        --panel-border: #e4d6c5;
+        --shadow: 0 26px 70px rgba(33, 21, 11, 0.2);
+        --radius: 18px;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        min-height: 100vh;
+        background:
+          radial-gradient(circle at 15% 15%, rgba(196, 84, 42, 0.15), transparent 50%),
+          radial-gradient(circle at 85% 10%, rgba(26, 111, 103, 0.2), transparent 45%), #f4ede3;
+      }
+
+      .app {
+        max-width: 1200px;
+        margin: 0 auto;
+        padding: 48px 20px 64px;
+        display: grid;
+        gap: 28px;
+        animation: fadeIn 0.6s ease;
+      }
+
+      @keyframes fadeIn {
+        from {
+          opacity: 0;
+          transform: translateY(16px);
+        }
+        to {
+          opacity: 1;
+          transform: translateY(0);
+        }
+      }
+
+      .hero {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) minmax(0, 420px);
+        gap: 24px;
+        align-items: center;
+      }
+
+      .kicker {
+        display: inline-block;
+        padding: 6px 12px;
+        border-radius: 999px;
+        background: #1b140e;
+        color: #fff8ef;
+        font-size: 12px;
+        letter-spacing: 0.14em;
+        text-transform: uppercase;
+        font-weight: 700;
+      }
+
+      h1 {
+        font-family: 'Fraunces', serif;
+        font-size: clamp(32px, 5vw, 46px);
+        margin: 14px 0 10px;
+      }
+
+      .hero p {
+        margin: 0;
+        font-size: 16px;
+        color: var(--muted);
+        max-width: 520px;
+      }
+
+      .hero-tools {
+        display: grid;
+        gap: 14px;
+        background: var(--panel);
+        border: 1px solid var(--panel-border);
+        padding: 18px;
+        border-radius: var(--radius);
+        box-shadow: var(--shadow);
+      }
+
+      .tool-stack {
+        display: grid;
+        gap: 6px;
+      }
+
+      .tool-stack label {
+        font-size: 12px;
+        text-transform: uppercase;
+        letter-spacing: 0.12em;
+        font-weight: 700;
+        color: var(--muted);
+      }
+
+      agentconnect-login-button,
+      agentconnect-model-picker,
+      agentconnect-provider-status,
+      agentconnect-connect {
+        --ac-accent: #2f6bff;
+        --ac-button-bg: #0b1320;
+        --ac-button-color: #f8fbff;
+        --ac-button-secondary-bg: #eef3ff;
+        --ac-button-secondary-color: #0b1320;
+        --ac-button-secondary-border: #dbe4ff;
+        --ac-button-ghost-color: #3f4a5a;
+        --ac-button-ghost-border: #d8dee8;
+        --ac-chip-bg: #e6efff;
+        --ac-chip-color: #1b2a3d;
+        --ac-modal-bg: #ffffff;
+        --ac-modal-color: #0b1320;
+        --ac-modal-border: #e3e8ef;
+        --ac-card-border: #e3e8ef;
+        --ac-card-active-bg: #f5f8ff;
+        --ac-alert-bg: #f5f7fb;
+        --ac-alert-color: #1c2735;
+        --ac-alert-border: #e3e8ef;
+        --ac-muted: #556070;
+      }
+
+      .workspace {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+        gap: 20px;
+      }
+
+      .panel {
+        background: var(--panel);
+        border: 1px solid var(--panel-border);
+        border-radius: var(--radius);
+        padding: 20px;
+        box-shadow: var(--shadow);
+        display: grid;
+        gap: 14px;
+      }
+
+      .panel-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+      }
+
+      .panel h2 {
+        margin: 0;
+        font-size: 20px;
+      }
+
+      .meta {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        font-size: 12px;
+        color: var(--muted);
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+      }
+
+      textarea {
+        min-height: 200px;
+        resize: vertical;
+        padding: 14px;
+        border-radius: 12px;
+        border: 1px solid #d7c9b2;
+        font-size: 15px;
+        background: #fffdf8;
+        color: var(--ink);
+      }
+
+      .output {
+        min-height: 200px;
+        border-radius: 12px;
+        border: 1px dashed #d7c9b2;
+        padding: 16px;
+        background: #fffdf8;
+        white-space: pre-wrap;
+        font-size: 15px;
+      }
+
+      .quick-actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+      }
+
+      .chip {
+        border: 1px solid transparent;
+        padding: 8px 12px;
+        border-radius: 999px;
+        background: #f4e1d4;
+        font-size: 12px;
+        font-weight: 600;
+        cursor: pointer;
+        color: var(--ink);
+      }
+
+      .chip.active {
+        background: var(--accent);
+        color: #fff8ef;
+      }
+
+      .controls {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+        gap: 16px;
+        background: var(--panel);
+        border: 1px solid var(--panel-border);
+        border-radius: var(--radius);
+        padding: 18px;
+        box-shadow: var(--shadow);
+      }
+
+      .control {
+        display: grid;
+        gap: 6px;
+      }
+
+      .control label {
+        font-size: 12px;
+        text-transform: uppercase;
+        letter-spacing: 0.1em;
+        font-weight: 700;
+        color: var(--muted);
+      }
+
+      select,
+      input[type='text'] {
+        border: 1px solid #d7c9b2;
+        border-radius: 10px;
+        padding: 10px 12px;
+        background: #fffdf8;
+        font-size: 14px;
+        color: var(--ink);
+      }
+
+      .control.wide {
+        grid-column: span 2;
+      }
+
+      .action-bar {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        flex-wrap: wrap;
+      }
+
+      button {
+        appearance: none;
+        border: none;
+        border-radius: 12px;
+        padding: 10px 16px;
+        background: var(--accent);
+        color: #fff8ef;
+        font-size: 14px;
+        font-weight: 700;
+        cursor: pointer;
+        box-shadow: 0 12px 24px rgba(196, 84, 42, 0.25);
+      }
+
+      button.secondary {
+        background: #efe0cf;
+        color: var(--ink);
+        box-shadow: none;
+      }
+
+      button.ghost {
+        background: transparent;
+        color: var(--accent-dark);
+        border: 1px solid var(--accent-soft);
+        box-shadow: none;
+      }
+
+      button:disabled {
+        opacity: 0.6;
+        cursor: wait;
+      }
+
+      .history {
+        background: var(--panel);
+        border: 1px solid var(--panel-border);
+        border-radius: var(--radius);
+        padding: 18px;
+        box-shadow: var(--shadow);
+      }
+
+      .history h3 {
+        margin: 0 0 12px;
+        font-size: 18px;
+      }
+
+      .history-list {
+        display: grid;
+        gap: 10px;
+      }
+
+      .history-item {
+        padding: 10px 12px;
+        border-radius: 12px;
+        background: #f6eadc;
+        cursor: pointer;
+      }
+
+      .history-item strong {
+        display: block;
+        font-size: 13px;
+        margin-bottom: 4px;
+      }
+
+      .history-item span {
+        font-size: 13px;
+        color: var(--muted);
+      }
+
+      @media (max-width: 900px) {
+        .hero {
+          grid-template-columns: 1fr;
+        }
+
+        .control.wide {
+          grid-column: span 1;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main class="app">
+      <header class="hero">
+        <div>
+          <span class="kicker">AgentConnect Demo</span>
+          <h1>__APP_NAME__</h1>
+          <p>Prototype a local AI experience powered by your own model choice.</p>
+        </div>
+        <div class="hero-tools">
+          <div class="tool-stack">
+            <label>Agent</label>
+            <agentconnect-connect id="agentConnect"></agentconnect-connect>
+          </div>
+        </div>
+      </header>
+
+      <section class="workspace">
+        <div class="panel">
+          <div class="panel-header">
+            <h2>Draft</h2>
+            <div class="meta">
+              <span id="wordCount">0 words</span>
+              <button id="clear" class="ghost" type="button">Clear</button>
+            </div>
+          </div>
+          <textarea id="input" placeholder="Paste or write a draft here..."></textarea>
+          <div class="quick-actions" id="modeChips"></div>
+        </div>
+        <div class="panel">
+          <div class="panel-header">
+            <h2>Output</h2>
+            <div class="meta">
+              <span id="status">Idle</span>
+              <button id="copy" class="ghost" type="button">Copy</button>
+              <button id="apply" class="ghost" type="button">Replace</button>
+            </div>
+          </div>
+          <div id="output" class="output">Waiting for AgentConnect...</div>
+        </div>
+      </section>
+
+      <section class="controls">
+        <div class="control">
+          <label>Mode</label>
+          <select id="modeSelect"></select>
+        </div>
+        <div class="control">
+          <label>Tone</label>
+          <select id="toneSelect"></select>
+        </div>
+        <div class="control">
+          <label>Audience</label>
+          <select id="audienceSelect"></select>
+        </div>
+        <div class="control">
+          <label>Length</label>
+          <select id="lengthSelect"></select>
+        </div>
+        <div class="control">
+          <label>Format</label>
+          <select id="formatSelect"></select>
+        </div>
+        <div class="control wide">
+          <label>Goal / Context</label>
+          <input id="goalInput" type="text" placeholder="What should the rewrite achieve?" />
+        </div>
+        <div class="control">
+          <label>Actions</label>
+          <div class="action-bar">
+            <button id="run" type="button">Generate</button>
+            <button id="newSession" class="secondary" type="button">New Session</button>
+          </div>
+        </div>
+      </section>
+
+      <section class="history">
+        <h3>Recent Outputs</h3>
+        <div class="history-list" id="historyList"></div>
+      </section>
+    </main>
+    <script type="module">
+      import { defineAgentConnectComponents } from '@agentconnect/ui';
+
+      defineAgentConnectComponents();
+    </script>
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>

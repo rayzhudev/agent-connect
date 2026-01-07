@@ -1,0 +1,467 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agentconnect.dev/schemas/acp-methods.json",
+  "$defs": {
+    "ProviderId": { "type": "string", "enum": ["claude", "codex", "local"] },
+    "ModelId": { "type": "string", "minLength": 1 },
+    "SessionId": { "type": "string", "minLength": 1 },
+    "ProviderInfo": {
+      "type": "object",
+      "required": ["id", "installed", "loggedIn"],
+      "properties": {
+        "id": { "$ref": "#/$defs/ProviderId" },
+        "name": { "type": "string" },
+        "installed": { "type": "boolean" },
+        "loggedIn": { "type": "boolean" },
+        "version": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "ModelInfo": {
+      "type": "object",
+      "required": ["id", "provider"],
+      "properties": {
+        "id": { "$ref": "#/$defs/ModelId" },
+        "provider": { "$ref": "#/$defs/ProviderId" },
+        "displayName": { "type": "string" },
+        "contextWindow": { "type": "integer", "minimum": 1 },
+        "maxOutputTokens": { "type": "integer", "minimum": 1 },
+        "pricing": { "type": "object" },
+        "reasoningEfforts": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["id"],
+            "properties": {
+              "id": { "type": "string", "minLength": 1 },
+              "label": { "type": "string" }
+            },
+            "additionalProperties": false
+          }
+        },
+        "defaultReasoningEffort": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "HelloParams": { "type": "object", "additionalProperties": false },
+    "HelloResult": {
+      "type": "object",
+      "required": [
+        "hostId",
+        "hostName",
+        "hostVersion",
+        "protocolVersion",
+        "mode",
+        "capabilities",
+        "providers"
+      ],
+      "properties": {
+        "hostId": { "type": "string" },
+        "hostName": { "type": "string" },
+        "hostVersion": { "type": "string" },
+        "protocolVersion": { "type": "string" },
+        "mode": { "type": "string", "enum": ["hosted", "local"] },
+        "capabilities": { "type": "array", "items": { "type": "string" } },
+        "providers": { "type": "array", "items": { "$ref": "#/$defs/ProviderId" } }
+      },
+      "additionalProperties": false
+    },
+    "CapabilitiesObservedParams": {
+      "type": "object",
+      "properties": { "appId": { "type": "string" } },
+      "additionalProperties": false
+    },
+    "CapabilitiesObservedResult": {
+      "type": "object",
+      "required": ["appId", "requested", "observed", "updatedAt"],
+      "properties": {
+        "appId": { "type": "string" },
+        "requested": { "type": "array", "items": { "type": "string" } },
+        "observed": { "type": "array", "items": { "type": "string" } },
+        "updatedAt": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "ProvidersListParams": { "type": "object", "additionalProperties": false },
+    "ProvidersListResult": {
+      "type": "object",
+      "required": ["providers"],
+      "properties": {
+        "providers": { "type": "array", "items": { "$ref": "#/$defs/ProviderInfo" } }
+      },
+      "additionalProperties": false
+    },
+    "ProviderStatusParams": {
+      "type": "object",
+      "required": ["provider"],
+      "properties": { "provider": { "$ref": "#/$defs/ProviderId" } },
+      "additionalProperties": false
+    },
+    "ProviderStatusResult": {
+      "type": "object",
+      "required": ["provider"],
+      "properties": { "provider": { "$ref": "#/$defs/ProviderInfo" } },
+      "additionalProperties": false
+    },
+    "ProviderEnsureParams": {
+      "type": "object",
+      "required": ["provider"],
+      "properties": { "provider": { "$ref": "#/$defs/ProviderId" } },
+      "additionalProperties": false
+    },
+    "ProviderEnsureResult": {
+      "type": "object",
+      "required": ["installed"],
+      "properties": {
+        "installed": { "type": "boolean" },
+        "version": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "ProviderLoginParams": {
+      "type": "object",
+      "required": ["provider"],
+      "properties": {
+        "provider": { "$ref": "#/$defs/ProviderId" },
+        "options": {
+          "type": "object",
+          "properties": {
+            "baseUrl": { "type": "string" },
+            "apiKey": { "type": "string" },
+            "model": { "type": "string" },
+            "models": { "type": "array", "items": { "type": "string" } }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "ProviderLoginResult": {
+      "type": "object",
+      "required": ["loggedIn"],
+      "properties": { "loggedIn": { "type": "boolean" } },
+      "additionalProperties": false
+    },
+    "ModelsListParams": {
+      "type": "object",
+      "properties": { "provider": { "$ref": "#/$defs/ProviderId" } },
+      "additionalProperties": false
+    },
+    "ModelsListResult": {
+      "type": "object",
+      "required": ["models"],
+      "properties": {
+        "models": { "type": "array", "items": { "$ref": "#/$defs/ModelInfo" } }
+      },
+      "additionalProperties": false
+    },
+    "ModelsInfoParams": {
+      "type": "object",
+      "required": ["model"],
+      "properties": { "model": { "$ref": "#/$defs/ModelId" } },
+      "additionalProperties": false
+    },
+    "ModelsInfoResult": {
+      "type": "object",
+      "required": ["model"],
+      "properties": { "model": { "$ref": "#/$defs/ModelInfo" } },
+      "additionalProperties": false
+    },
+    "SessionCreateParams": {
+      "type": "object",
+      "required": ["model"],
+      "properties": {
+        "model": { "$ref": "#/$defs/ModelId" },
+        "reasoningEffort": { "type": "string" },
+        "system": { "type": "string" },
+        "metadata": { "type": "object" },
+        "temperature": { "type": "number", "minimum": 0, "maximum": 2 },
+        "maxTokens": { "type": "integer", "minimum": 1 },
+        "topP": { "type": "number", "minimum": 0, "maximum": 1 }
+      },
+      "additionalProperties": false
+    },
+    "SessionCreateResult": {
+      "type": "object",
+      "required": ["sessionId"],
+      "properties": { "sessionId": { "$ref": "#/$defs/SessionId" } },
+      "additionalProperties": false
+    },
+    "SessionResumeParams": {
+      "type": "object",
+      "required": ["sessionId"],
+      "properties": { "sessionId": { "$ref": "#/$defs/SessionId" } },
+      "additionalProperties": false
+    },
+    "SessionResumeResult": {
+      "type": "object",
+      "required": ["sessionId"],
+      "properties": { "sessionId": { "$ref": "#/$defs/SessionId" } },
+      "additionalProperties": false
+    },
+    "SessionSendParams": {
+      "type": "object",
+      "required": ["sessionId", "message"],
+      "properties": {
+        "sessionId": { "$ref": "#/$defs/SessionId" },
+        "message": {
+          "type": "object",
+          "required": ["role", "content"],
+          "properties": {
+            "role": { "type": "string", "enum": ["user", "system", "assistant"] },
+            "content": { "type": "string" }
+          },
+          "additionalProperties": false
+        },
+        "metadata": { "type": "object" }
+      },
+      "additionalProperties": false
+    },
+    "SessionSendResult": {
+      "type": "object",
+      "required": ["accepted"],
+      "properties": { "accepted": { "type": "boolean" } },
+      "additionalProperties": false
+    },
+    "SessionCancelParams": {
+      "type": "object",
+      "required": ["sessionId"],
+      "properties": { "sessionId": { "$ref": "#/$defs/SessionId" } },
+      "additionalProperties": false
+    },
+    "SessionCancelResult": {
+      "type": "object",
+      "required": ["cancelled"],
+      "properties": { "cancelled": { "type": "boolean" } },
+      "additionalProperties": false
+    },
+    "SessionCloseParams": {
+      "type": "object",
+      "required": ["sessionId"],
+      "properties": { "sessionId": { "$ref": "#/$defs/SessionId" } },
+      "additionalProperties": false
+    },
+    "SessionCloseResult": {
+      "type": "object",
+      "required": ["closed"],
+      "properties": { "closed": { "type": "boolean" } },
+      "additionalProperties": false
+    },
+    "FsReadParams": {
+      "type": "object",
+      "required": ["path"],
+      "properties": { "path": { "type": "string" }, "encoding": { "type": "string" } },
+      "additionalProperties": false
+    },
+    "FsReadResult": {
+      "type": "object",
+      "required": ["content"],
+      "properties": { "content": { "type": "string" }, "encoding": { "type": "string" } },
+      "additionalProperties": false
+    },
+    "FsWriteParams": {
+      "type": "object",
+      "required": ["path", "content"],
+      "properties": {
+        "path": { "type": "string" },
+        "content": { "type": "string" },
+        "encoding": { "type": "string" },
+        "mode": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "FsWriteResult": {
+      "type": "object",
+      "required": ["bytes"],
+      "properties": { "bytes": { "type": "integer", "minimum": 0 } },
+      "additionalProperties": false
+    },
+    "FsListParams": {
+      "type": "object",
+      "required": ["path"],
+      "properties": { "path": { "type": "string" } },
+      "additionalProperties": false
+    },
+    "FsListResult": {
+      "type": "object",
+      "required": ["entries"],
+      "properties": {
+        "entries": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["name", "path", "type"],
+            "properties": {
+              "name": { "type": "string" },
+              "path": { "type": "string" },
+              "type": { "type": "string", "enum": ["file", "dir", "link", "other"] },
+              "size": { "type": "integer", "minimum": 0 }
+            },
+            "additionalProperties": false
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "FsStatParams": {
+      "type": "object",
+      "required": ["path"],
+      "properties": { "path": { "type": "string" } },
+      "additionalProperties": false
+    },
+    "FsStatResult": {
+      "type": "object",
+      "required": ["type", "size", "mtime"],
+      "properties": {
+        "type": { "type": "string", "enum": ["file", "dir", "link", "other"] },
+        "size": { "type": "integer", "minimum": 0 },
+        "mtime": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "ProcessSpawnParams": {
+      "type": "object",
+      "required": ["command"],
+      "properties": {
+        "command": { "type": "string" },
+        "args": { "type": "array", "items": { "type": "string" } },
+        "cwd": { "type": "string" },
+        "env": { "type": "object" },
+        "stdin": { "type": "string" },
+        "tty": { "type": "boolean" }
+      },
+      "additionalProperties": false
+    },
+    "ProcessSpawnResult": {
+      "type": "object",
+      "required": ["pid"],
+      "properties": { "pid": { "type": "integer", "minimum": 1 } },
+      "additionalProperties": false
+    },
+    "ProcessKillParams": {
+      "type": "object",
+      "required": ["pid"],
+      "properties": { "pid": { "type": "integer", "minimum": 1 }, "signal": { "type": "string" } },
+      "additionalProperties": false
+    },
+    "ProcessKillResult": {
+      "type": "object",
+      "required": ["success"],
+      "properties": { "success": { "type": "boolean" } },
+      "additionalProperties": false
+    },
+    "NetRequestParams": {
+      "type": "object",
+      "required": ["url"],
+      "properties": {
+        "url": { "type": "string" },
+        "method": { "type": "string" },
+        "headers": { "type": "object" },
+        "body": { "type": "string" },
+        "timeoutMs": { "type": "integer", "minimum": 0 }
+      },
+      "additionalProperties": false
+    },
+    "NetRequestResult": {
+      "type": "object",
+      "required": ["status", "headers", "body"],
+      "properties": {
+        "status": { "type": "integer", "minimum": 100 },
+        "headers": { "type": "object" },
+        "body": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "StorageGetParams": {
+      "type": "object",
+      "required": ["key"],
+      "properties": { "key": { "type": "string" } },
+      "additionalProperties": false
+    },
+    "StorageGetResult": {
+      "type": "object",
+      "required": ["value"],
+      "properties": { "value": {} },
+      "additionalProperties": false
+    },
+    "StorageSetParams": {
+      "type": "object",
+      "required": ["key", "value"],
+      "properties": { "key": { "type": "string" }, "value": {} },
+      "additionalProperties": false
+    },
+    "StorageSetResult": {
+      "type": "object",
+      "required": ["ok"],
+      "properties": { "ok": { "type": "boolean" } },
+      "additionalProperties": false
+    },
+    "ClipboardReadParams": { "type": "object", "additionalProperties": false },
+    "ClipboardReadResult": {
+      "type": "object",
+      "required": ["text"],
+      "properties": { "text": { "type": "string" } },
+      "additionalProperties": false
+    },
+    "ClipboardWriteParams": {
+      "type": "object",
+      "required": ["text"],
+      "properties": { "text": { "type": "string" } },
+      "additionalProperties": false
+    },
+    "ClipboardWriteResult": {
+      "type": "object",
+      "required": ["ok"],
+      "properties": { "ok": { "type": "boolean" } },
+      "additionalProperties": false
+    },
+    "SystemOpenParams": {
+      "type": "object",
+      "required": ["target"],
+      "properties": { "target": { "type": "string" } },
+      "additionalProperties": false
+    },
+    "SystemOpenResult": {
+      "type": "object",
+      "required": ["ok"],
+      "properties": { "ok": { "type": "boolean" } },
+      "additionalProperties": false
+    },
+    "BackendStartParams": {
+      "type": "object",
+      "required": ["appId"],
+      "properties": { "appId": { "type": "string" } },
+      "additionalProperties": false
+    },
+    "BackendStartResult": {
+      "type": "object",
+      "required": ["status"],
+      "properties": { "status": { "type": "string" }, "url": { "type": "string" } },
+      "additionalProperties": false
+    },
+    "BackendStopParams": {
+      "type": "object",
+      "required": ["appId"],
+      "properties": { "appId": { "type": "string" } },
+      "additionalProperties": false
+    },
+    "BackendStopResult": {
+      "type": "object",
+      "required": ["status"],
+      "properties": { "status": { "type": "string" } },
+      "additionalProperties": false
+    },
+    "BackendStatusParams": {
+      "type": "object",
+      "required": ["appId"],
+      "properties": { "appId": { "type": "string" } },
+      "additionalProperties": false
+    },
+    "BackendStatusResult": {
+      "type": "object",
+      "required": ["status"],
+      "properties": { "status": { "type": "string" }, "url": { "type": "string" } },
+      "additionalProperties": false
+    }
+  }
+}

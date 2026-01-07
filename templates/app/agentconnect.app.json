@@ -1,0 +1,20 @@
+{
+  "id": "__APP_ID__",
+  "name": "__APP_NAME__",
+  "version": "0.1.0",
+  "entry": {
+    "type": "web",
+    "path": "dist/index.html",
+    "devUrl": "http://localhost:5173"
+  },
+  "capabilities": [
+    "agent.connect",
+    "model.claude",
+    "model.codex",
+    "model.local"
+  ],
+  "providers": ["claude", "codex", "local"],
+  "models": { "default": "claude-opus" },
+  "icon": "icon.svg",
+  "license": "MIT"
+}

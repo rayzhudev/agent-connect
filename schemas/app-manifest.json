@@ -1,0 +1,69 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agentconnect.dev/schemas/app-manifest.json",
+  "type": "object",
+  "required": ["id", "name", "version", "entry"],
+  "properties": {
+    "id": { "type": "string", "pattern": "^[a-zA-Z0-9_.-]+$" },
+    "name": { "type": "string", "minLength": 1 },
+    "version": { "type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+(-[a-z0-9.-]+)?$" },
+    "description": { "type": "string" },
+    "entry": {
+      "type": "object",
+      "required": ["type", "path"],
+      "properties": {
+        "type": { "const": "web" },
+        "path": { "type": "string", "minLength": 1 },
+        "devUrl": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "backend": {
+      "type": "object",
+      "required": ["runtime", "command"],
+      "properties": {
+        "runtime": { "type": "string", "enum": ["node"] },
+        "command": { "type": "string" },
+        "args": { "type": "array", "items": { "type": "string" } },
+        "cwd": { "type": "string" },
+        "env": { "type": "object" },
+        "healthcheck": {
+          "type": "object",
+          "required": ["type", "path"],
+          "properties": {
+            "type": { "type": "string", "enum": ["http"] },
+            "path": { "type": "string" }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "capabilities": { "type": "array", "items": { "type": "string" }, "uniqueItems": true },
+    "providers": {
+      "type": "array",
+      "items": { "type": "string", "enum": ["claude", "codex", "local"] },
+      "uniqueItems": true
+    },
+    "models": {
+      "type": "object",
+      "properties": { "default": { "type": "string" } },
+      "additionalProperties": false
+    },
+    "icon": { "type": "string" },
+    "repo": { "type": "string" },
+    "homepage": { "type": "string" },
+    "license": { "type": "string" },
+    "author": {
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "email": { "type": "string" },
+        "url": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "keywords": { "type": "array", "items": { "type": "string" } }
+  },
+  "additionalProperties": false
+}
