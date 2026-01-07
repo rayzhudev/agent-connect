@@ -131,7 +131,16 @@ export function runCommand(
 ): Promise<CommandResult> {
   return new Promise((resolve) => {
     const { input, timeoutMs, ...spawnOptions } = options;
-    const resolved = resolveCommandPath(command) ?? command;
+    if (!command) {
+      resolve({ code: -1, stdout: '', stderr: 'Command is empty' });
+      return;
+    }
+
+    const resolved = resolveCommandPath(command);
+    if (!resolved) {
+      resolve({ code: 127, stdout: '', stderr: `Executable not found in PATH: "${command}"` });
+      return;
+    }
     const child = spawn(resolved, args, {
       ...spawnOptions,
       stdio: ['pipe', 'pipe', 'pipe'],
