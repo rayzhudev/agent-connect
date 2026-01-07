@@ -19,5 +19,5 @@ agentconnect registry-verify --registry . --require-signature --json
 If the CLI is not installed yet, run it from the AgentConnect repo:
 
 ```bash
-bun /path/to/agent-connect/packages/cli/src/index.mjs registry-verify --registry . --require-signature --json
+bun /path/to/agent-connect/packages/cli/src/index.ts registry-verify --registry . --require-signature --json
 ```

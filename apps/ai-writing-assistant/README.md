@@ -27,7 +27,7 @@ agentconnect dev --app . --ui http://localhost:5173
 If the CLI is not installed yet, run it from the SDK repo:
 
 ```bash
-bun ./packages/cli/src/index.mjs dev --app apps/ai-writing-assistant --ui http://localhost:5173
+bun ./packages/cli/src/index.ts dev --app apps/ai-writing-assistant --ui http://localhost:5173
 ```
 
 ## What to edit

@@ -25,7 +25,7 @@ agentconnect dev --app . --ui http://localhost:5173
 If the CLI is not installed yet, run it from the SDK repo:
 
 ```bash
-bun ./packages/cli/src/index.mjs dev --app . --ui http://localhost:5173
+bun ./packages/cli/src/index.ts dev --app . --ui http://localhost:5173
 ```
 
 ## Customize

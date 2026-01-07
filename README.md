@@ -199,7 +199,7 @@ agentconnect publish --app dist/app.zip --registry . --signature dist/app.sig.js
 Until the CLI is published, you can run the dev host directly:
 
 ```bash
-bun ./packages/cli/src/index.mjs dev
+bun ./packages/cli/src/index.ts dev
 ```
 
 ## Provider configuration (dev host)
@@ -243,7 +243,7 @@ Expected endpoints:
 ## AI runbook (command-only)
 
 Use this block as a strict step-by-step script for a coding agent.
-If `agentconnect` is not installed yet, replace it with `bun /path/to/agent-connect/packages/cli/src/index.mjs`.
+If `agentconnect` is not installed yet, replace it with `bun /path/to/agent-connect/packages/cli/src/index.ts`.
 
 ```bash
 AGENTCONNECT_REPO="/path/to/agent-connect"
