@@ -1,4 +1,5 @@
 import { spawn } from 'child_process';
+import path from 'path';
 import type {
   ProviderStatus,
   ModelInfo,
@@ -454,18 +455,23 @@ export function runCodexPrompt({
   model,
   reasoningEffort,
   repoRoot,
+  cwd,
   onEvent,
   signal,
 }: RunPromptOptions): Promise<RunPromptResult> {
   return new Promise((resolve) => {
     const command = getCodexCommand();
+    const resolvedRepoRoot = repoRoot ? path.resolve(repoRoot) : null;
+    const resolvedCwd = cwd ? path.resolve(cwd) : null;
+    const runDir = resolvedCwd || resolvedRepoRoot || process.cwd();
+    const cdTarget = resolvedRepoRoot || resolvedCwd || '.';
     const args = [
       'exec',
       '--skip-git-repo-check',
       '--experimental-json',
       '--yolo',
       '--cd',
-      repoRoot || '.',
+      cdTarget,
     ];
     if (model) {
       args.push('--model', String(model));
@@ -482,10 +488,10 @@ export function runCodexPrompt({
     if (argsPreview.length > 0) {
       argsPreview[argsPreview.length - 1] = '[prompt]';
     }
-    debugLog('Codex', 'spawn', { command, args: argsPreview, cwd: repoRoot || '.' });
+    debugLog('Codex', 'spawn', { command, args: argsPreview, cwd: runDir });
 
     const child = spawn(command, args, {
-      cwd: repoRoot,
+      cwd: runDir,
       env: { ...process.env },
       stdio: ['ignore', 'pipe', 'pipe'],
     });
