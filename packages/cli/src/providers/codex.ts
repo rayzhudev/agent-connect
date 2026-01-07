@@ -35,6 +35,55 @@ function trimOutput(value: string, limit = 400): string {
   return `${cleaned.slice(0, limit)}...`;
 }
 
+type CodexExecMode = 'modern' | 'legacy';
+
+function buildCodexExecArgs(options: {
+  prompt: string;
+  cdTarget: string;
+  resumeSessionId?: string | null;
+  model?: string;
+  reasoningEffort?: string | null;
+  mode: CodexExecMode;
+}): string[] {
+  const { prompt, cdTarget, resumeSessionId, model, reasoningEffort, mode } = options;
+  const args: string[] = ['exec', '--skip-git-repo-check'];
+  if (mode === 'legacy') {
+    args.push('--json', '-C', cdTarget);
+  } else {
+    args.push('--experimental-json', '--cd', cdTarget);
+  }
+  args.push('--yolo');
+  if (model) {
+    args.push('--model', String(model));
+  }
+  if (reasoningEffort) {
+    args.push('--config', `model_reasoning_effort=${reasoningEffort}`);
+  }
+  if (resumeSessionId) {
+    args.push('resume', resumeSessionId);
+  }
+  args.push(prompt);
+  return args;
+}
+
+function shouldFallbackToLegacy(lines: string[]): boolean {
+  const combined = lines.join(' ').toLowerCase();
+  if (
+    !(
+      combined.includes('unknown flag') ||
+      combined.includes('unknown option') ||
+      combined.includes('unrecognized option') ||
+      combined.includes('unknown argument') ||
+      combined.includes('unexpected argument') ||
+      combined.includes('invalid option') ||
+      combined.includes('invalid argument')
+    )
+  ) {
+    return false;
+  }
+  return combined.includes('experimental-json') || combined.includes('--cd');
+}
+
 export function getCodexCommand(): string {
   const override = process.env.AGENTCONNECT_CODEX_COMMAND;
   const base = override || 'codex';
@@ -465,137 +514,153 @@ export function runCodexPrompt({
     const resolvedCwd = cwd ? path.resolve(cwd) : null;
     const runDir = resolvedCwd || resolvedRepoRoot || process.cwd();
     const cdTarget = resolvedRepoRoot || resolvedCwd || '.';
-    const args = [
-      'exec',
-      '--skip-git-repo-check',
-      '--experimental-json',
-      '--yolo',
-      '--cd',
-      cdTarget,
-    ];
-    if (model) {
-      args.push('--model', String(model));
-    }
-    if (reasoningEffort) {
-      args.push('--config', `model_reasoning_effort=${reasoningEffort}`);
-    }
-    if (resumeSessionId) {
-      args.push('resume', resumeSessionId);
-    }
-    args.push(prompt);
 
-    const argsPreview = [...args];
-    if (argsPreview.length > 0) {
-      argsPreview[argsPreview.length - 1] = '[prompt]';
-    }
-    debugLog('Codex', 'spawn', { command, args: argsPreview, cwd: runDir });
+    const runAttempt = (mode: CodexExecMode): Promise<{ sessionId: string | null; fallback: boolean }> =>
+      new Promise((attemptResolve) => {
+        const args = buildCodexExecArgs({
+          prompt,
+          cdTarget,
+          resumeSessionId,
+          model,
+          reasoningEffort,
+          mode,
+        });
 
-    const child = spawn(command, args, {
-      cwd: runDir,
-      env: { ...process.env },
-      stdio: ['ignore', 'pipe', 'pipe'],
-    });
-
-    if (signal) {
-      signal.addEventListener('abort', () => {
-        child.kill('SIGTERM');
-      });
-    }
-
-    let aggregated = '';
-    let finalSessionId: string | null = null;
-    let didFinalize = false;
-    const stdoutLines: string[] = [];
-    const stderrLines: string[] = [];
-    const pushLine = (list: string[], line: string): void => {
-      if (!line) return;
-      list.push(line);
-      if (list.length > 12) list.shift();
-    };
-
-    const handleLine = (line: string, source: 'stdout' | 'stderr'): void => {
-      const parsed = safeJsonParse(line);
-      if (!parsed || typeof parsed !== 'object') {
-        if (source === 'stdout') {
-          pushLine(stdoutLines, line);
-        } else {
-          pushLine(stderrLines, line);
+        const argsPreview = [...args];
+        if (argsPreview.length > 0) {
+          argsPreview[argsPreview.length - 1] = '[prompt]';
         }
+        debugLog('Codex', 'spawn', { command, args: argsPreview, cwd: runDir, mode });
+
+        const child = spawn(command, args, {
+          cwd: runDir,
+          env: { ...process.env },
+          stdio: ['ignore', 'pipe', 'pipe'],
+        });
+
+        if (signal) {
+          signal.addEventListener('abort', () => {
+            child.kill('SIGTERM');
+          });
+        }
+
+        let aggregated = '';
+        let finalSessionId: string | null = null;
+        let didFinalize = false;
+        let sawJson = false;
+        const stdoutLines: string[] = [];
+        const stderrLines: string[] = [];
+        const pushLine = (list: string[], line: string): void => {
+          if (!line) return;
+          list.push(line);
+          if (list.length > 12) list.shift();
+        };
+
+        const handleLine = (line: string, source: 'stdout' | 'stderr'): void => {
+          const parsed = safeJsonParse(line);
+          if (!parsed || typeof parsed !== 'object') {
+            if (source === 'stdout') {
+              pushLine(stdoutLines, line);
+            } else {
+              pushLine(stderrLines, line);
+            }
+            return;
+          }
+          sawJson = true;
+          const ev = parsed as CodexEvent;
+          const normalized = normalizeEvent(ev);
+          const sid = extractSessionId(ev);
+          if (sid) finalSessionId = sid;
+
+          const usage = extractUsage(ev);
+          if (usage) {
+            onEvent({
+              type: 'usage',
+              inputTokens: usage.input_tokens,
+              outputTokens: usage.output_tokens,
+            });
+          }
+
+          if (normalized.type === 'agent_message') {
+            const text = normalized.text;
+            if (typeof text === 'string' && text) {
+              aggregated += text;
+              onEvent({ type: 'delta', text });
+            }
+          } else if (normalized.type === 'item.completed') {
+            const item = normalized.item;
+            if (item && typeof item === 'object') {
+              if (item.type === 'command_execution' && typeof item.aggregated_output === 'string') {
+                onEvent({ type: 'delta', text: item.aggregated_output });
+              }
+              if (item.type === 'agent_message' && typeof item.text === 'string') {
+                aggregated += item.text;
+                onEvent({ type: 'delta', text: item.text });
+              }
+            }
+          }
+
+          if (isTerminalEvent(ev) && !didFinalize) {
+            didFinalize = true;
+            onEvent({ type: 'final', text: aggregated });
+            if (ev.type === 'turn.failed') {
+              const message = ev.error?.message;
+              if (typeof message === 'string') {
+                onEvent({ type: 'error', message });
+              }
+            }
+          }
+        };
+
+        const stdoutParser = createLineParser((line) => handleLine(line, 'stdout'));
+        const stderrParser = createLineParser((line) => handleLine(line, 'stderr'));
+
+        child.stdout?.on('data', stdoutParser);
+        child.stderr?.on('data', stderrParser);
+
+        child.on('close', (code) => {
+          if (!didFinalize) {
+            if (code && code !== 0) {
+              const hint = stderrLines.at(-1) || stdoutLines.at(-1) || '';
+              const suffix = hint ? `: ${hint}` : '';
+              const fallback = mode === 'modern' && !sawJson && shouldFallbackToLegacy([
+                ...stderrLines,
+                ...stdoutLines,
+              ]);
+              debugLog('Codex', 'exit', {
+                code,
+                stderr: stderrLines,
+                stdout: stdoutLines,
+                fallback,
+              });
+              if (fallback) {
+                attemptResolve({ sessionId: finalSessionId, fallback: true });
+                return;
+              }
+              onEvent({ type: 'error', message: `Codex exited with code ${code}${suffix}` });
+            } else {
+              onEvent({ type: 'final', text: aggregated });
+            }
+          }
+          attemptResolve({ sessionId: finalSessionId, fallback: false });
+        });
+
+        child.on('error', (err: Error) => {
+          debugLog('Codex', 'spawn-error', { message: err?.message });
+          onEvent({ type: 'error', message: err?.message ?? 'Codex failed to start' });
+          attemptResolve({ sessionId: finalSessionId, fallback: false });
+        });
+      });
+
+    void (async () => {
+      const primary = await runAttempt('modern');
+      if (primary.fallback) {
+        debugLog('Codex', 'fallback', { from: 'modern', to: 'legacy' });
+        const legacy = await runAttempt('legacy');
+        resolve({ sessionId: legacy.sessionId });
         return;
       }
-      const ev = parsed as CodexEvent;
-      const normalized = normalizeEvent(ev);
-      const sid = extractSessionId(ev);
-      if (sid) finalSessionId = sid;
-
-      const usage = extractUsage(ev);
-      if (usage) {
-        onEvent({
-          type: 'usage',
-          inputTokens: usage.input_tokens,
-          outputTokens: usage.output_tokens,
-        });
-      }
-
-      if (normalized.type === 'agent_message') {
-        const text = normalized.text;
-        if (typeof text === 'string' && text) {
-          aggregated += text;
-          onEvent({ type: 'delta', text });
-        }
-      } else if (normalized.type === 'item.completed') {
-        const item = normalized.item;
-        if (item && typeof item === 'object') {
-          if (item.type === 'command_execution' && typeof item.aggregated_output === 'string') {
-            onEvent({ type: 'delta', text: item.aggregated_output });
-          }
-          if (item.type === 'agent_message' && typeof item.text === 'string') {
-            aggregated += item.text;
-            onEvent({ type: 'delta', text: item.text });
-          }
-        }
-      }
-
-      if (isTerminalEvent(ev) && !didFinalize) {
-        didFinalize = true;
-        onEvent({ type: 'final', text: aggregated });
-        if (ev.type === 'turn.failed') {
-          const message = ev.error?.message;
-          if (typeof message === 'string') {
-            onEvent({ type: 'error', message });
-          }
-        }
-      }
-    };
-
-    const stdoutParser = createLineParser((line) => handleLine(line, 'stdout'));
-    const stderrParser = createLineParser((line) => handleLine(line, 'stderr'));
-
-    child.stdout?.on('data', stdoutParser);
-    child.stderr?.on('data', stderrParser);
-
-    child.on('close', (code) => {
-      if (!didFinalize) {
-        if (code && code !== 0) {
-          const hint = stderrLines.at(-1) || stdoutLines.at(-1) || '';
-          const suffix = hint ? `: ${hint}` : '';
-          debugLog('Codex', 'exit', {
-            code,
-            stderr: stderrLines,
-            stdout: stdoutLines,
-          });
-          onEvent({ type: 'error', message: `Codex exited with code ${code}${suffix}` });
-        } else {
-          onEvent({ type: 'final', text: aggregated });
-        }
-      }
-      resolve({ sessionId: finalSessionId });
-    });
-
-    child.on('error', (err: Error) => {
-      debugLog('Codex', 'spawn-error', { message: err?.message });
-      onEvent({ type: 'error', message: err?.message ?? 'Codex failed to start' });
-      resolve({ sessionId: finalSessionId });
-    });
+      resolve({ sessionId: primary.sessionId });
+    })();
   });
 }
