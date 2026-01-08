@@ -113,9 +113,17 @@ export default function Sidebar({
           <ul className="space-y-1">
             {spreadsheets.map((sheet) => (
               <li key={sheet.id}>
-                <button
+                <div
+                  role="button"
+                  tabIndex={0}
                   onClick={() => onSelect(sheet.id)}
-                  className={`w-full text-left px-3 py-2 rounded-lg text-sm transition-colors group ${
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter' || event.key === ' ') {
+                      event.preventDefault()
+                      onSelect(sheet.id)
+                    }
+                  }}
+                  className={`w-full text-left px-3 py-2 rounded-lg text-sm transition-colors group cursor-pointer ${
                     currentId === sheet.id
                       ? 'bg-blue-100 text-blue-700'
                       : 'text-slate-700 hover:bg-slate-100'
@@ -145,7 +153,7 @@ export default function Sidebar({
                   <div className="text-xs text-slate-500 mt-1">
                     {formatDate(sheet.updatedAt)}
                   </div>
-                </button>
+                </div>
               </li>
             ))}
           </ul>

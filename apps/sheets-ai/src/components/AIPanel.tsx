@@ -36,35 +36,6 @@ export default function AIPanel({
   const [isBusy, setIsBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const chatWindowRef = useRef<HTMLDivElement>(null)
-  const sessionRef = useRef<any>(null)
-  const sessionModelRef = useRef<string | null>(null)
-  const clientRef = useRef<any>(null)
-
-  useEffect(() => {
-    async function initAgentConnect() {
-      try {
-        const { AgentConnect } = await import('@agentconnect/sdk')
-        clientRef.current = await AgentConnect.connect()
-      } catch (err) {
-        console.error('Failed to connect to AgentConnect:', err)
-      }
-    }
-    initAgentConnect()
-
-    return () => {
-      if (sessionRef.current) {
-        sessionRef.current.close().catch(() => {})
-      }
-    }
-  }, [])
-
-  useEffect(() => {
-    if (sessionRef.current && sessionModelRef.current !== selectedModel) {
-      sessionRef.current.close().catch(() => {})
-      sessionRef.current = null
-      sessionModelRef.current = null
-    }
-  }, [selectedModel])
 
   useEffect(() => {
     if (chatWindowRef.current) {
@@ -94,6 +65,13 @@ export default function AIPanel({
     if (!userMessage.trim() || isBusy) return
 
     setError(null)
+    const history = messages
+      .filter(message => message.text.trim().length > 0)
+      .slice(-6)
+      .map(message => ({
+        role: message.role,
+        text: message.text,
+      }))
     const userMsgId = crypto.randomUUID()
     const assistantMsgId = crypto.randomUUID()
 
@@ -106,61 +84,33 @@ export default function AIPanel({
     setIsBusy(true)
 
     try {
-      if (!clientRef.current) {
-        throw new Error('Not connected to agent')
-      }
-
-      if (!sessionRef.current) {
-        sessionRef.current = await clientRef.current.sessions.create({
-          model: selectedModel,
-        })
-        sessionModelRef.current = selectedModel
-      }
-
       const context = buildContext()
-      const prompt = `You are a spreadsheet assistant helping with data analysis and manipulation.
-
-${context}
-
-User request: ${userMessage}
-
-Provide helpful, concise responses. If suggesting formulas, explain what they do. If analyzing data, focus on actionable insights.`
-
-      let buffer = ''
-
-      const onDelta = sessionRef.current.on('delta', (ev: any) => {
-        buffer += ev.text || ''
-        setMessages(prev =>
-          prev.map(m => m.id === assistantMsgId ? { ...m, text: buffer } : m)
-        )
+      const response = await fetch('/api/agent', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          message: userMessage,
+          model: selectedModel,
+          context,
+          history,
+        }),
       })
 
-      const onFinal = sessionRef.current.on('final', (ev: any) => {
-        if (ev.text) buffer = ev.text
-        setMessages(prev =>
-          prev.map(m => m.id === assistantMsgId ? { ...m, text: buffer } : m)
-        )
-        setIsBusy(false)
-        onDelta()
-        onFinal()
-        onError()
-      })
+      if (!response.ok) {
+        throw new Error('Agent request failed')
+      }
 
-      const onError = sessionRef.current.on('error', (ev: any) => {
-        setError(ev.message || 'An error occurred')
-        setIsBusy(false)
-        onDelta()
-        onFinal()
-        onError()
-      })
-
-      await sessionRef.current.send(prompt)
+      const data = await response.json()
+      const text = typeof data?.text === 'string' ? data.text : ''
+      setMessages(prev =>
+        prev.map(m => m.id === assistantMsgId ? { ...m, text } : m)
+      )
     } catch (err: any) {
       setError(err?.message || 'Failed to send message')
       setMessages(prev => prev.filter(m => m.id !== assistantMsgId))
-      setIsBusy(false)
     }
-  }, [isBusy, buildContext])
+    setIsBusy(false)
+  }, [isBusy, buildContext, messages, selectedModel])
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
@@ -170,10 +120,6 @@ Provide helpful, concise responses. If suggesting formulas, explain what they do
   }
 
   const resetSession = () => {
-    if (sessionRef.current) {
-      sessionRef.current.close().catch(() => {})
-      sessionRef.current = null
-    }
     setMessages([])
     setError(null)
   }

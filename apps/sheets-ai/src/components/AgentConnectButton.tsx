@@ -21,7 +21,14 @@ export default function AgentConnectButton({
       if (initialized.current) return
       initialized.current = true
 
-      const { defineAgentConnectComponents } = await import('@agentconnect/ui')
+      const hostReady = fetch('/api/agentconnect')
+        .then((res) => (res.ok ? res.json() : Promise.reject(new Error('Host failed'))))
+        .catch((err) => {
+          console.error('Failed to start AgentConnect host:', err)
+          return null
+        })
+
+      const { defineAgentConnectComponents, resetClient } = await import('@agentconnect/ui')
       defineAgentConnectComponents()
 
       await customElements.whenDefined('agentconnect-connect')
@@ -32,6 +39,14 @@ export default function AgentConnectButton({
       if ((el as any).render) {
         (el as any).render()
       }
+
+      hostReady.then((result) => {
+        if (!result) return
+        resetClient()
+        const current = ref.current
+        if (!current || !(current as any).refresh) return
+        ;(current as any).refresh({ silent: true })
+      })
     }
     init()
   }, [])

@@ -30,11 +30,13 @@
       "name": "sheets-ai",
       "version": "0.1.0",
       "dependencies": {
+        "@agentconnect/cli": "workspace:*",
         "@agentconnect/sdk": "workspace:*",
         "@agentconnect/ui": "workspace:*",
         "next": "^14.2.0",
         "react": "^18.3.0",
         "react-dom": "^18.3.0",
+        "ws": "^8.19.0",
         "xlsx": "^0.18.5",
       },
       "devDependencies": {
@@ -49,9 +51,9 @@
     },
     "packages/cli": {
       "name": "@agentconnect/cli",
-      "version": "0.1.0",
+      "version": "0.1.2",
       "bin": {
-        "agentconnect": "./dist/index.js",
+        "agentconnect": "dist/index.js",
       },
       "dependencies": {
         "ajv": "^8.17.1",
@@ -71,14 +73,14 @@
     },
     "packages/sdk": {
       "name": "@agentconnect/sdk",
-      "version": "0.1.0",
+      "version": "0.1.2",
       "devDependencies": {
         "typescript": "^5.6.2",
       },
     },
     "packages/ui": {
       "name": "@agentconnect/ui",
-      "version": "0.1.0",
+      "version": "0.1.2",
       "dependencies": {
         "@agentconnect/sdk": "workspace:*",
       },

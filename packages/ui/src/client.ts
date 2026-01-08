@@ -13,7 +13,10 @@ let clientPromise: Promise<AgentConnectClient> | null = null;
  */
 export function getClient(): Promise<AgentConnectClient> {
   if (!clientPromise) {
-    clientPromise = AgentConnect.connect();
+    clientPromise = AgentConnect.connect().catch((err) => {
+      clientPromise = null;
+      throw err;
+    });
   }
   return clientPromise;
 }

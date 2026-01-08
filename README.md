@@ -77,6 +77,14 @@ npm install -g @agentconnect/cli
 agentconnect dev --app . --ui http://localhost:5173
 ```
 
+Auto-start a local host from a Node backend:
+
+```ts
+import { ensureAgentConnectHost } from '@agentconnect/sdk/host';
+
+await ensureAgentConnectHost();
+```
+
 ## Try the examples
 
 From the repo root, install dependencies (this also builds the SDK and CLI):
@@ -85,19 +93,17 @@ From the repo root, install dependencies (this also builds the SDK and CLI):
 bun install
 ```
 
-Start the dev host (separate terminal):
-
-```bash
-agentconnect dev --app . --ui http://localhost:5173
-```
-
-Run the client-only example:
+Run the client-only example (requires the AgentConnect dev host in a second terminal):
 
 ```bash
 bun --cwd apps/agentic-notes dev
 ```
 
-Run the Next.js example:
+```bash
+agentconnect dev --app apps/agentic-notes --ui http://localhost:5173
+```
+
+Run the Next.js example with a Node backend (auto-starts the AgentConnect host):
 
 ```bash
 bun --cwd apps/sheets-ai dev
@@ -105,8 +111,8 @@ bun --cwd apps/sheets-ai dev
 
 ## Examples
 
-- `apps/agentic-notes`: client-only writing assistant demo.
-- `apps/sheets-ai`: spreadsheet + agent example with a backend.
+- `apps/agentic-notes`: client-only notes assistant (requires running the AgentConnect host).
+- `apps/sheets-ai`: spreadsheet + agent example with a Node backend (starts the host automatically).
 
 ## Docs
 

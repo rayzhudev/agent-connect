@@ -9,11 +9,13 @@
     "lint": "next lint"
   },
   "dependencies": {
+    "@agentconnect/cli": "workspace:*",
     "@agentconnect/sdk": "workspace:*",
     "@agentconnect/ui": "workspace:*",
     "next": "^14.2.0",
     "react": "^18.3.0",
     "react-dom": "^18.3.0",
+    "ws": "^8.19.0",
     "xlsx": "^0.18.5"
   },
   "devDependencies": {
