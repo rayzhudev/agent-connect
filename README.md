@@ -9,6 +9,15 @@ AgentConnect allows any local app to connect to a user's coding agent CLIs e.g. 
 
 AgentConnect features a Connect Agent modal that installs and logs into different AI providers, and allows users to select their choice of provider and model.
 
+Here's what the AgentConnect modal offers:
+- One-click install + login flows with clear status states.
+- Automatic provider detection with background loading.
+- Seamless model switching without leaving the modal.
+
+It's perfect to plug and play into any locally running app.
+
+![AgentConnect modal](docs/assets/connect_agent_modal.gif)
+
 Currently supported coding agent providers:
 - Claude Code
 - ChatGPT Codex
