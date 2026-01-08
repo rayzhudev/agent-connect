@@ -2,7 +2,8 @@
 
 All notable changes to this project will be documented in this file.
 
-## Unreleased
+## 0.1.0
 
-- Add SDK and CLI build outputs for publishing.
-- Add package-level READMEs and contributor docs.
+- Initial public SDK, UI, and CLI release.
+- Publish-ready build outputs for SDK and CLI.
+- SDK reference docs and contributor documentation.
