@@ -1,4 +1,6 @@
 import { spawn } from 'child_process';
+import { readFile } from 'fs/promises';
+import os from 'os';
 import path from 'path';
 import type {
   ProviderStatus,
@@ -33,6 +35,42 @@ function trimOutput(value: string, limit = 400): string {
   if (!cleaned) return '';
   if (cleaned.length <= limit) return cleaned;
   return `${cleaned.slice(0, limit)}...`;
+}
+
+function getCodexConfigDir(): string {
+  return process.env.CODEX_CONFIG_DIR || path.join(os.homedir(), '.codex');
+}
+
+function hasAuthValue(value: unknown): boolean {
+  return typeof value === 'string' && value.trim().length > 0;
+}
+
+async function hasCodexAuth(): Promise<boolean> {
+  const home = os.homedir();
+  const candidates = [
+    path.join(getCodexConfigDir(), 'auth.json'),
+    path.join(home, '.config', 'codex', 'auth.json'),
+  ];
+
+  for (const filePath of candidates) {
+    try {
+      const raw = await readFile(filePath, 'utf8');
+      const parsed = JSON.parse(raw) as Record<string, unknown>;
+      if (hasAuthValue(parsed.OPENAI_API_KEY)) return true;
+      if (hasAuthValue(parsed.access_token)) return true;
+      if (hasAuthValue(parsed.token)) return true;
+      const tokens = parsed.tokens as Record<string, unknown> | undefined;
+      if (tokens) {
+        if (hasAuthValue(tokens.access_token)) return true;
+        if (hasAuthValue(tokens.refresh_token)) return true;
+        if (hasAuthValue(tokens.id_token)) return true;
+      }
+    } catch {
+      // try next path
+    }
+  }
+
+  return false;
 }
 
 type CodexExecMode = 'modern' | 'legacy';
@@ -130,13 +168,35 @@ export async function getCodexStatus(): Promise<ProviderStatus> {
   const versionCheck = await checkCommandVersion(command, [['--version'], ['-V']]);
   const installed = versionCheck.ok || commandExists(command);
   let loggedIn = false;
+  let explicitLoggedOut = false;
 
   if (installed) {
     const status = buildStatusCommand('AGENTCONNECT_CODEX_STATUS', DEFAULT_STATUS);
     if (status.command) {
       const statusCommand = resolveWindowsCommand(status.command);
-      const result = await runCommand(statusCommand, status.args);
-      loggedIn = result.code === 0;
+      const result = await runCommand(statusCommand, status.args, { env: { ...process.env, CI: '1' } });
+      const output = `${result.stdout}\n${result.stderr}`.toLowerCase();
+      if (
+        output.includes('not logged in') ||
+        output.includes('not logged') ||
+        output.includes('login required') ||
+        output.includes('please login') ||
+        output.includes('run codex login')
+      ) {
+        explicitLoggedOut = true;
+        loggedIn = false;
+      } else if (
+        output.includes('logged in') ||
+        output.includes('signed in') ||
+        output.includes('authenticated')
+      ) {
+        loggedIn = true;
+      } else {
+        loggedIn = result.code === 0;
+      }
+    }
+    if (!loggedIn && !explicitLoggedOut) {
+      loggedIn = await hasCodexAuth();
     }
   }
 

@@ -48,6 +48,9 @@ export class AgentConnectConnect extends HTMLElement {
   private handleResize: () => void;
   private loginPollTimer: ReturnType<typeof setInterval> | null;
   private readonly loginPollIntervalMs = 2000;
+  private readonly loginPollTimeoutMs = 120_000;
+  private readonly loginPending = new Set<ProviderId>();
+  private readonly statusCheckInFlight = new Set<ProviderId>();
   private readonly modelsRefreshIntervalMs = 30_000;
 
   constructor() {
@@ -225,11 +228,7 @@ export class AgentConnectConnect extends HTMLElement {
     }
     this.setView(this.state.connected ? 'connected' : 'connect');
     this.refresh();
-    if (!this.state.models.length) {
-      this.startLoginPolling();
-    } else {
-      this.stopLoginPolling();
-    }
+    this.updateLoginPolling();
   }
 
   private close(): void {
@@ -254,11 +253,7 @@ export class AgentConnectConnect extends HTMLElement {
     if (view === 'connected') {
       this.popoverLocked = false;
       this.popoverPosition = null;
-      if (!this.state.models.length) {
-        this.startLoginPolling();
-      } else {
-        this.stopLoginPolling();
-      }
+      this.updateLoginPolling();
       this.renderConnectedModels();
       this.renderReasoningEfforts();
       requestAnimationFrame(() => this.positionPopover());
@@ -438,6 +433,11 @@ export class AgentConnectConnect extends HTMLElement {
     const previous = this.state.providers;
     const providers = await client.providers.list();
     this.state.providers = providers;
+    for (const provider of providers) {
+      if (provider.loggedIn) {
+        this.loginPending.delete(provider.id);
+      }
+    }
     if (this.state.view === 'connected') {
       this.updatePopoverTitle();
       this.updateButtonLabel();
@@ -456,9 +456,91 @@ export class AgentConnectConnect extends HTMLElement {
       this.renderConnectedModels();
       this.renderReasoningEfforts();
     }
-    if (after?.loggedIn && this.state.models.length > 0) {
+    this.updateLoginPolling();
+  }
+
+  private shouldPollLogin(): boolean {
+    if (!this.elements?.overlay?.classList.contains('open')) return false;
+    if (this.loginPending.size > 0) return true;
+    return this.state.providers.some((provider) => provider.installed && !provider.loggedIn);
+  }
+
+  private updateLoginPolling(): void {
+    if (this.shouldPollLogin()) {
+      this.startLoginPolling();
+    } else {
       this.stopLoginPolling();
     }
+  }
+
+  private updateProviderEntry(providerId: ProviderId, updates: Partial<ProviderInfo>): void {
+    const index = this.state.providers.findIndex((entry) => entry.id === providerId);
+    if (index === -1) return;
+    this.state.providers[index] = { ...this.state.providers[index], ...updates };
+  }
+
+  private async checkProviderStatus(providerId: ProviderId, providerName?: string): Promise<void> {
+    if (this.statusCheckInFlight.has(providerId)) return;
+    this.statusCheckInFlight.add(providerId);
+    const label = providerName || providerId;
+    this.setStatus(`Checking ${label} status...`);
+    try {
+      const client = await getClient();
+      const status = await client.providers.status(providerId);
+      this.updateProviderEntry(providerId, {
+        installed: status.installed,
+        loggedIn: status.loggedIn,
+        version: status.version,
+      });
+      if (status.loggedIn) {
+        this.loginPending.delete(providerId);
+        await this.refreshModels();
+        this.renderConnectedModels();
+        this.renderReasoningEfforts();
+      }
+      this.renderProviders();
+      this.updatePopoverTitle();
+      this.updateButtonLabel();
+      this.updateLoginPolling();
+    } finally {
+      this.statusCheckInFlight.delete(providerId);
+    }
+  }
+
+  private async waitForProviderLogin(providerId: ProviderId, providerName: string): Promise<boolean> {
+    const client = await getClient();
+    const startedAt = Date.now();
+    this.loginPending.add(providerId);
+    this.updateLoginPolling();
+    this.setProviderLoading(providerId, false);
+    this.renderProviders();
+    this.updatePopoverTitle();
+    this.updateButtonLabel();
+
+    while (Date.now() - startedAt < this.loginPollTimeoutMs) {
+      const status = await client.providers.status(providerId);
+      this.updateProviderEntry(providerId, {
+        installed: status.installed,
+        loggedIn: status.loggedIn,
+        version: status.version,
+      });
+      if (status.loggedIn) {
+        this.loginPending.delete(providerId);
+        await this.refreshModels();
+        this.renderConnectedModels();
+        this.renderReasoningEfforts();
+        this.updatePopoverTitle();
+        this.updateButtonLabel();
+        this.updateLoginPolling();
+        return true;
+      }
+      await new Promise((resolve) => setTimeout(resolve, this.loginPollIntervalMs));
+    }
+
+    this.loginPending.delete(providerId);
+    this.updateLoginPolling();
+    this.setStatus(`Still waiting for ${providerName} login...`);
+    return false;
   }
 
   private async prefetchProviders(): Promise<void> {
@@ -607,6 +689,7 @@ export class AgentConnectConnect extends HTMLElement {
       return provider.installed ? 'Configured' : 'Offline';
     }
     if (!provider.installed) return 'Not installed';
+    if (this.loginPending.has(provider.id)) return 'Waiting for login';
     if (!provider.loggedIn) return 'Login needed';
     if (isConnected) return 'Connected';
     return 'Detected';
@@ -633,6 +716,13 @@ export class AgentConnectConnect extends HTMLElement {
       if (terminalLogin) {
         button.title = 'Opens a terminal and runs claude login';
       }
+      return button;
+    }
+    if (this.loginPending.has(provider.id)) {
+      const button = this.buildActionButton('Waiting for login...', false, () =>
+        this.checkProviderStatus(provider.id, provider.name)
+      );
+      button.title = `Click to check ${provider.name || provider.id} login status`;
       return button;
     }
     if (!provider.loggedIn) {
@@ -763,6 +853,13 @@ export class AgentConnectConnect extends HTMLElement {
     }
 
     if (needsLogin) {
+      if (!this.loginPending.has(provider.id)) {
+        this.loginPending.add(provider.id);
+        this.updateLoginPolling();
+        this.renderProviders();
+        this.updatePopoverTitle();
+        this.updateButtonLabel();
+      }
       this.setBusy(true, `Waiting for ${providerName} login...`);
       this.setProviderLoading(provider.id, true, 'Logging in...');
       const loginOptions =
@@ -770,7 +867,12 @@ export class AgentConnectConnect extends HTMLElement {
           ? { loginExperience: this.state.loginExperience }
           : undefined;
       const loggedIn = await client.providers.login(provider.id, loginOptions);
-      if (!loggedIn.loggedIn) {
+      if (loggedIn.loggedIn) {
+        this.loginPending.delete(provider.id);
+        this.updateLoginPolling();
+      } else {
+        const updated = await this.waitForProviderLogin(provider.id, providerName);
+        if (updated) return true;
         this.setAlert({
           type: 'error',
           ...ERROR_MESSAGES.login_incomplete,
