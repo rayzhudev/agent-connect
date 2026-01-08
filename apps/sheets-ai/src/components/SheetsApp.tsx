@@ -292,6 +292,7 @@ export default function SheetsApp({
                   selectedCell={selectedCell}
                   selectedModel={selectedModel}
                   isAgentConnected={isAgentConnected}
+                  onApplySuggestion={handleDataChange}
                 />
               </div>
             </div>

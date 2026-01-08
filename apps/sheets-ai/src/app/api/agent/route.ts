@@ -22,6 +22,10 @@ function buildPrompt(context: string, history: HistoryEntry[], message: string):
 
   const parts = [
     'You are a spreadsheet assistant helping with data analysis and manipulation.',
+    'When you want to modify the sheet, include a JSON action block in a fenced ```agentconnect``` code block.',
+    'Actions schema:',
+    '{"actions":[{"type":"set_cell","row":1,"col":1,"value":"New value"},{"type":"set_range","startRow":1,"startCol":1,"values":[["A1","B1"],["A2","B2"]]}]}',
+    'Rows and columns are 1-based indexes.',
   ]
 
   if (context.trim()) {
@@ -54,27 +58,57 @@ export async function POST(request: Request) {
   await ensureAgentConnectHost()
   const client = await AgentConnect.connect()
   const session = await client.sessions.create({ model })
-
-  let finalText = ''
-
-  try {
-    await new Promise<void>((resolve, reject) => {
-      const offFinal = session.on('final', (event) => {
-        finalText = event.text || ''
-        offFinal()
-        offError()
-        resolve()
-      })
-      const offError = session.on('error', (event) => {
-        offFinal()
-        offError()
-        reject(new Error(event.message || 'Agent error'))
-      })
-      session.send(buildPrompt(context, history, message)).catch(reject)
-    })
-  } finally {
-    await session.close().catch(() => {})
+  const encoder = new TextEncoder()
+  const headers = {
+    'Content-Type': 'text/event-stream; charset=utf-8',
+    'Cache-Control': 'no-cache, no-transform',
+    Connection: 'keep-alive',
   }
 
-  return NextResponse.json({ text: finalText })
+  const stream = new ReadableStream({
+    start: (controller) => {
+      let closed = false
+      let buffer = ''
+      const send = (payload: Record<string, unknown>) => {
+        if (closed) return
+        controller.enqueue(encoder.encode(`data: ${JSON.stringify(payload)}\n\n`))
+      }
+      const finish = async () => {
+        if (closed) return
+        closed = true
+        offDelta()
+        offFinal()
+        offError()
+        await session.close().catch(() => {})
+        controller.close()
+      }
+
+      const offDelta = session.on('delta', (event) => {
+        const text = event.text || ''
+        if (!text) return
+        buffer += text
+        send({ type: 'delta', text })
+      })
+
+      const offFinal = session.on('final', (event) => {
+        send({ type: 'final', text: event.text || buffer })
+        finish()
+      })
+
+      const offError = session.on('error', (event) => {
+        send({ type: 'error', message: event.message || 'Agent error' })
+        finish()
+      })
+
+      session.send(buildPrompt(context, history, message)).catch((err) => {
+        send({ type: 'error', message: err?.message || 'Agent error' })
+        finish()
+      })
+    },
+    cancel: async () => {
+      await session.close().catch(() => {})
+    },
+  })
+
+  return new Response(stream, { headers })
 }

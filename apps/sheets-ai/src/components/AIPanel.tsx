@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef, useCallback } from 'react'
 import type { SheetData } from '@/lib/types'
+import { applyAgentActions, parseAgentActions } from '@/lib/agent-actions'
 
 interface Message {
   id: string
@@ -36,12 +37,28 @@ export default function AIPanel({
   const [isBusy, setIsBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const chatWindowRef = useRef<HTMLDivElement>(null)
+  const dataRef = useRef(spreadsheetData)
 
   useEffect(() => {
     if (chatWindowRef.current) {
       chatWindowRef.current.scrollTop = chatWindowRef.current.scrollHeight
     }
   }, [messages])
+
+  useEffect(() => {
+    dataRef.current = spreadsheetData
+  }, [spreadsheetData])
+
+  const finalizeResponse = useCallback((rawText: string, assistantId: string) => {
+    const { cleanedText, actions } = parseAgentActions(rawText)
+    if (actions.length > 0 && onApplySuggestion) {
+      const updated = applyAgentActions(dataRef.current, actions)
+      onApplySuggestion(updated)
+    }
+    setMessages(prev =>
+      prev.map(m => m.id === assistantId ? { ...m, text: cleanedText } : m)
+    )
+  }, [onApplySuggestion])
 
   const buildContext = useCallback(() => {
     const rows = spreadsheetData.slice(0, 100)
@@ -99,12 +116,62 @@ export default function AIPanel({
       if (!response.ok) {
         throw new Error('Agent request failed')
       }
+      const contentType = response.headers.get('content-type') || ''
+      if (contentType.includes('text/event-stream') && response.body) {
+        const reader = response.body.getReader()
+        const decoder = new TextDecoder()
+        let buffer = ''
+        let fullText = ''
 
-      const data = await response.json()
-      const text = typeof data?.text === 'string' ? data.text : ''
-      setMessages(prev =>
-        prev.map(m => m.id === assistantMsgId ? { ...m, text } : m)
-      )
+        const applyText = (text: string) => {
+          setMessages(prev =>
+            prev.map(m => m.id === assistantMsgId ? { ...m, text } : m)
+          )
+        }
+
+        while (true) {
+          const { value, done } = await reader.read()
+          if (done) break
+          buffer += decoder.decode(value, { stream: true })
+
+          let boundary = buffer.indexOf('\n\n')
+          while (boundary !== -1) {
+            const raw = buffer.slice(0, boundary).trim()
+            buffer = buffer.slice(boundary + 2)
+            if (raw) {
+              const line = raw
+                .split('\n')
+                .find(entry => entry.startsWith('data:'))
+              if (line) {
+                const payloadText = line.replace(/^data:\s*/, '')
+                try {
+                  const payload = JSON.parse(payloadText) as {
+                    type?: string
+                    text?: string
+                    message?: string
+                  }
+                  if (payload.type === 'delta' && payload.text) {
+                    fullText += payload.text
+                    applyText(fullText)
+                  } else if (payload.type === 'final') {
+                    fullText = payload.text || fullText
+                    finalizeResponse(fullText, assistantMsgId)
+                  } else if (payload.type === 'error') {
+                    throw new Error(payload.message || 'Agent error')
+                  }
+                } catch {
+                  // Ignore malformed events.
+                }
+              }
+            }
+            boundary = buffer.indexOf('\n\n')
+          }
+        }
+      } else {
+        const data = await response.json()
+        const text = typeof data?.text === 'string' ? data.text : ''
+        finalizeResponse(text, assistantMsgId)
+      }
     } catch (err: any) {
       setError(err?.message || 'Failed to send message')
       setMessages(prev => prev.filter(m => m.id !== assistantMsgId))
