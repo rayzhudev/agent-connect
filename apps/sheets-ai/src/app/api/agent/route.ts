@@ -1,7 +1,6 @@
 import { NextResponse } from 'next/server'
 import { AgentConnect } from '@agentconnect/sdk'
 import { ensureAgentConnectHost } from '@agentconnect/sdk/host'
-import WebSocket from 'ws'
 
 export const runtime = 'nodejs'
 
@@ -53,7 +52,7 @@ export async function POST(request: Request) {
   }
 
   await ensureAgentConnectHost()
-  const client = await AgentConnect.connect({ webSocket: WebSocket as any })
+  const client = await AgentConnect.connect()
   const session = await client.sessions.create({ model })
 
   let finalText = ''
