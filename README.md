@@ -114,6 +114,12 @@ bun --cwd apps/sheets-ai dev
 - `apps/agentic-notes`: client-only notes assistant (requires running the AgentConnect host).
 - `apps/sheets-ai`: spreadsheet + agent example with a Node backend (starts the host automatically).
 
+## Registry (GitHub)
+
+AgentConnect registries are Git repositories. Apps are added via pull requests and validated with `agentconnect registry-verify`.
+
+- See `registry/README.md` for the registry layout and submission steps.
+
 ## Docs
 
 - `docs/SDK.md`: full SDK reference and examples.
