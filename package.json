@@ -21,6 +21,7 @@
     "new:app": "bun scripts/new-app.mjs",
     "dev:host": "bun ./packages/cli/src/index.ts dev",
     "build": "bun run --cwd packages/sdk build && bun run --cwd packages/ui build && bun run --cwd packages/cli build",
+    "postinstall": "bun run build",
     "test:smoke": "bun tests/smoke.mjs",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",

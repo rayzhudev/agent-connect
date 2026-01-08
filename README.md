@@ -77,6 +77,32 @@ npm install -g @agentconnect/cli
 agentconnect dev --app . --ui http://localhost:5173
 ```
 
+## Try the examples
+
+From the repo root, install dependencies (this also builds the SDK and CLI):
+
+```bash
+bun install
+```
+
+Start the dev host (separate terminal):
+
+```bash
+agentconnect dev --app . --ui http://localhost:5173
+```
+
+Run the client-only example:
+
+```bash
+bun --cwd apps/agentic-notes dev
+```
+
+Run the Next.js example:
+
+```bash
+bun --cwd apps/sheets-ai dev
+```
+
 ## Examples
 
 - `apps/agentic-notes`: client-only writing assistant demo.
