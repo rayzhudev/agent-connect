@@ -123,7 +123,6 @@ export const CONNECT_TEMPLATE = `
     </div>
     <div class="ac-panel ac-popover" role="dialog" aria-modal="true" data-view="connected" hidden>
       <div>
-        <div class="ac-popover-subtitle">Connected</div>
         <div class="ac-popover-title">Provider</div>
       </div>
       <div class="ac-field ac-model-field">

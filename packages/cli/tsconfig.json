@@ -6,7 +6,11 @@
     "lib": ["ES2022"],
     "strict": true,
     "skipLibCheck": true,
-    "noEmit": true
+    "declaration": true,
+    "declarationMap": false,
+    "emitDeclarationOnly": true,
+    "outDir": "./dist",
+    "rootDir": "./src"
   },
   "include": ["src"]
 }

@@ -1,7 +1,8 @@
 {
-  "id": "com.agentconnect.ai-writing-assistant",
-  "name": "AI Writing Assistant",
+  "id": "com.agentconnect.agentic-notes",
+  "name": "Agentic Notes",
   "version": "0.1.0",
+  "description": "Local knowledge concierge for chat-first notes and documents.",
   "entry": {
     "type": "web",
     "path": "dist/index.html",
@@ -14,7 +15,7 @@
     "model.local"
   ],
   "providers": ["claude", "codex", "local"],
-  "models": { "default": "claude-opus" },
+  "models": { "default": "claude-sonnet" },
   "icon": "icon.svg",
   "license": "MIT"
 }

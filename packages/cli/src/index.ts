@@ -1,4 +1,3 @@
-#!/usr/bin/env bun
 import path from 'path';
 import { promises as fs } from 'fs';
 import { createPrivateKey, createPublicKey, sign as signData } from 'crypto';

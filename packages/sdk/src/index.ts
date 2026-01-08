@@ -33,10 +33,12 @@ export type ModelInfo = {
 
 export type SessionEvent =
   | { type: 'delta'; text: string }
-  | { type: 'final'; text: string }
+  | { type: 'final'; text: string; providerSessionId?: string | null }
   | { type: 'usage'; usage: Record<string, number> }
   | { type: 'status'; status: 'thinking' | 'idle' | 'error'; error?: string }
-  | { type: 'error'; message: string };
+  | { type: 'error'; message: string }
+  | { type: 'raw_line'; line: string }
+  | { type: 'provider_event'; provider?: ProviderId; event: Record<string, unknown> };
 
 export type ProviderLoginOptions = {
   baseUrl?: string;
@@ -59,14 +61,31 @@ export type SessionCreateOptions = {
   reasoningEffort?: string;
   system?: string;
   metadata?: Record<string, unknown>;
+  cwd?: string;
+  repoRoot?: string;
   temperature?: number;
   maxTokens?: number;
   topP?: number;
 };
 
+export type SessionSendOptions = {
+  metadata?: Record<string, unknown>;
+  cwd?: string;
+  repoRoot?: string;
+};
+
+export type SessionResumeOptions = {
+  model?: string;
+  reasoningEffort?: string;
+  providerSessionId?: string | null;
+  cwd?: string;
+  repoRoot?: string;
+};
+
 export interface AgentConnectSession {
   id: string;
   send(message: string, metadata?: Record<string, unknown>): Promise<void>;
+  send(message: string, options?: SessionSendOptions): Promise<void>;
   cancel(): Promise<void>;
   close(): Promise<void>;
   on(type: SessionEvent['type'], handler: (ev: SessionEvent) => void): () => void;
@@ -96,6 +115,7 @@ export interface AgentConnectClient {
 
   models: {
     list(provider?: ProviderId): Promise<ModelInfo[]>;
+    recent(provider?: ProviderId): Promise<ModelInfo[]>;
     info(model: string): Promise<ModelInfo>;
   };
 
@@ -110,7 +130,7 @@ export interface AgentConnectClient {
 
   sessions: {
     create(options: SessionCreateOptions): Promise<AgentConnectSession>;
-    resume(sessionId: string): Promise<AgentConnectSession>;
+    resume(sessionId: string, options?: SessionResumeOptions): Promise<AgentConnectSession>;
   };
 
   fs: {
@@ -368,11 +388,17 @@ class AgentConnectSessionImpl implements AgentConnectSession {
     this.client = client;
   }
 
-  async send(message: string, metadata?: Record<string, unknown>): Promise<void> {
+  async send(
+    message: string,
+    options?: SessionSendOptions | Record<string, unknown>
+  ): Promise<void> {
+    const normalized = this.normalizeSendOptions(options);
     await this.client.request('acp.sessions.send', {
       sessionId: this.id,
       message: { role: 'user', content: message },
-      metadata,
+      metadata: normalized.metadata,
+      cwd: normalized.cwd,
+      repoRoot: normalized.repoRoot,
     });
   }
 
@@ -406,6 +432,21 @@ class AgentConnectSessionImpl implements AgentConnectSession {
       handler(event);
     }
   }
+
+  private normalizeSendOptions(
+    options?: SessionSendOptions | Record<string, unknown>
+  ): SessionSendOptions {
+    if (!options) return {};
+    const candidate = options as SessionSendOptions;
+    if (
+      'metadata' in candidate ||
+      'cwd' in candidate ||
+      'repoRoot' in candidate
+    ) {
+      return candidate;
+    }
+    return { metadata: options };
+  }
 }
 
 class AgentConnectClientImpl implements AgentConnectClient {
@@ -433,7 +474,13 @@ class AgentConnectClientImpl implements AgentConnectClient {
       return { type: 'delta', text: String(data?.text ?? '') };
     }
     if (type === 'final') {
-      return { type: 'final', text: String(data?.text ?? '') };
+      const providerSessionId =
+        typeof data?.providerSessionId === 'string'
+          ? data.providerSessionId
+          : typeof data?.sessionId === 'string'
+            ? data.sessionId
+            : undefined;
+      return { type: 'final', text: String(data?.text ?? ''), providerSessionId };
     }
     if (type === 'usage') {
       return { type: 'usage', usage: (data?.usage as Record<string, number>) ?? {} };
@@ -445,6 +492,18 @@ class AgentConnectClientImpl implements AgentConnectClient {
     }
     if (type === 'error') {
       return { type: 'error', message: String(data?.message ?? 'Unknown error') };
+    }
+    if (type === 'raw_line') {
+      return { type: 'raw_line', line: String(data?.line ?? '') };
+    }
+    if (type === 'provider_event') {
+      const provider =
+        typeof data?.provider === 'string' ? (data.provider as ProviderId) : undefined;
+      const event =
+        data?.event && typeof data.event === 'object'
+          ? (data.event as Record<string, unknown>)
+          : {};
+      return { type: 'provider_event', provider, event };
     }
     return null;
   }
@@ -508,6 +567,13 @@ class AgentConnectClientImpl implements AgentConnectClient {
       };
       return res.models ?? [];
     },
+    recent: async (provider?: ProviderId): Promise<ModelInfo[]> => {
+      const res = (await this.request(
+        'acp.models.recent',
+        provider ? { provider } : undefined
+      )) as { models: ModelInfo[] };
+      return res.models ?? [];
+    },
     info: async (model: string): Promise<ModelInfo> => {
       const res = (await this.request('acp.models.info', { model })) as { model: ModelInfo };
       return res.model;
@@ -537,8 +603,11 @@ class AgentConnectClientImpl implements AgentConnectClient {
       const res = (await this.request('acp.sessions.create', options)) as { sessionId: string };
       return this.getOrCreateSession(res.sessionId);
     },
-    resume: async (sessionId: string): Promise<AgentConnectSession> => {
-      await this.request('acp.sessions.resume', { sessionId });
+    resume: async (
+      sessionId: string,
+      options?: SessionResumeOptions
+    ): Promise<AgentConnectSession> => {
+      await this.request('acp.sessions.resume', { sessionId, ...(options ?? {}) });
       return this.getOrCreateSession(sessionId);
     },
   };

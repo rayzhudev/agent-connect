@@ -116,7 +116,12 @@ export const buttonStyles = `
 export const connectButtonStyles = `
   .ac-connect .ac-button {
     position: relative;
-    padding: 12px 24px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    min-height: 52px;
+    padding: 14px 24px;
     border-radius: 999px;
     background: linear-gradient(
       165deg,
@@ -142,6 +147,30 @@ export const connectButtonStyles = `
     -webkit-backdrop-filter: blur(12px);
     transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
     overflow: hidden;
+    width: min(var(--ac-connect-width, 240px), 92vw);
+    text-align: center;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+  }
+  .ac-connect .ac-connect-label {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .ac-connect .ac-connect-icon {
+    width: 20px;
+    height: 20px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex: 0 0 20px;
+  }
+  .ac-connect .ac-connect-icon svg {
+    width: 18px;
+    height: 18px;
+  }
+  .ac-connect .ac-connect-icon[data-provider="claude"] svg {
+    fill: #d97757;
   }
   .ac-connect .ac-button:hover:not([disabled]) {
     transform: translateY(-2px);

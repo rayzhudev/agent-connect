@@ -1,9 +1,8 @@
-import { defineConfig } from 'vite';
-import path from 'node:path';
+const path = require('node:path');
 
 const workspaceRoot = path.resolve(__dirname, '..', '..');
 
-export default defineConfig({
+module.exports = {
   optimizeDeps: {
     exclude: ['@agentconnect/sdk', '@agentconnect/ui'],
   },
@@ -18,4 +17,4 @@ export default defineConfig({
       allow: [workspaceRoot],
     },
   },
-});
+};

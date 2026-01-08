@@ -14,8 +14,9 @@ import type {
   BackendState,
   ProviderStatus,
   ProviderInfo,
+  InstallResult,
 } from './types.js';
-import { listModels, providers, resolveProviderForModel } from './providers/index.js';
+import { listModels, listRecentModels, providers, resolveProviderForModel } from './providers/index.js';
 import { createObservedTracker } from './observed.js';
 
 interface RpcPayload {
@@ -25,7 +26,7 @@ interface RpcPayload {
   params?: Record<string, unknown>;
 }
 
-type RpcResult = Record<string, unknown>;
+type RpcResult = Record<string, unknown> | InstallResult;
 
 function send(socket: WebSocket, payload: object): void {
   socket.send(JSON.stringify(payload));
@@ -315,6 +316,13 @@ export function startDevHost({
         return;
       }
 
+      if (method === 'acp.models.recent') {
+        const providerId = params.provider as ProviderId | undefined;
+        const models = await listRecentModels(providerId);
+        reply(socket, id, { models });
+        return;
+      }
+
       if (method === 'acp.models.info') {
         const modelId = params.model as string;
         const model = (await listModels()).find((m) => m.id === modelId);
@@ -330,6 +338,8 @@ export function startDevHost({
         const sessionId = `sess_${Math.random().toString(36).slice(2, 10)}`;
         const model = (params.model as string) || 'claude-opus';
         const reasoningEffort = (params.reasoningEffort as string) || null;
+        const cwd = params.cwd ? resolveAppPathInternal(params.cwd) : undefined;
+        const repoRoot = params.repoRoot ? resolveAppPathInternal(params.repoRoot) : undefined;
         const providerId = resolveProviderForModel(model);
         recordModelCapability(model);
         sessions.set(sessionId, {
@@ -338,6 +348,8 @@ export function startDevHost({
           model,
           providerSessionId: null,
           reasoningEffort,
+          cwd,
+          repoRoot,
         });
         reply(socket, id, { sessionId });
         return;
@@ -349,6 +361,8 @@ export function startDevHost({
         if (!existing) {
           const model = (params.model as string) || 'claude-opus';
           const reasoningEffort = (params.reasoningEffort as string) || null;
+          const cwd = params.cwd ? resolveAppPathInternal(params.cwd) : undefined;
+          const repoRoot = params.repoRoot ? resolveAppPathInternal(params.repoRoot) : undefined;
           recordModelCapability(model);
           sessions.set(sessionId, {
             id: sessionId,
@@ -356,8 +370,19 @@ export function startDevHost({
             model,
             providerSessionId: (params.providerSessionId as string) || null,
             reasoningEffort,
+            cwd,
+            repoRoot,
           });
         } else {
+          if (params.providerSessionId) {
+            existing.providerSessionId = String(params.providerSessionId);
+          }
+          if (params.cwd) {
+            existing.cwd = resolveAppPathInternal(params.cwd);
+          }
+          if (params.repoRoot) {
+            existing.repoRoot = resolveAppPathInternal(params.repoRoot);
+          }
           recordModelCapability(existing.model);
         }
         reply(socket, id, { sessionId });
@@ -390,7 +415,12 @@ export function startDevHost({
         }
 
         const controller = new AbortController();
+        const cwd = params.cwd ? resolveAppPathInternal(params.cwd) : session.cwd || basePath;
+        const repoRoot = params.repoRoot
+          ? resolveAppPathInternal(params.repoRoot)
+          : session.repoRoot || basePath;
         activeRuns.set(sessionId, controller);
+        let sawError = false;
 
         provider
           .runPrompt({
@@ -398,10 +428,16 @@ export function startDevHost({
             resumeSessionId: session.providerSessionId,
             model: session.model,
             reasoningEffort: session.reasoningEffort,
-            repoRoot: basePath,
-            cwd: basePath,
+            repoRoot,
+            cwd,
             signal: controller.signal,
             onEvent: (event) => {
+              if (event.type === 'error') {
+                sawError = true;
+              }
+              if (sawError && event.type === 'final') {
+                return;
+              }
               sessionEvent(socket, sessionId, event.type, { ...event });
             },
           })
@@ -411,7 +447,11 @@ export function startDevHost({
             }
           })
           .catch((err: Error) => {
-            sessionEvent(socket, sessionId, 'error', { message: err?.message || 'Provider error' });
+            if (!sawError) {
+              sessionEvent(socket, sessionId, 'error', {
+                message: err?.message || 'Provider error',
+              });
+            }
           })
           .finally(() => {
             activeRuns.delete(sessionId);

@@ -547,6 +547,13 @@ export function runCodexPrompt({
         let aggregated = '';
         let finalSessionId: string | null = null;
         let didFinalize = false;
+        let sawError = false;
+
+        const emitError = (message: string): void => {
+          if (sawError) return;
+          sawError = true;
+          onEvent({ type: 'error', message });
+        };
         let sawJson = false;
         const stdoutLines: string[] = [];
         const stderrLines: string[] = [];
@@ -556,9 +563,20 @@ export function runCodexPrompt({
           if (list.length > 12) list.shift();
         };
 
+        const emitFinal = (text: string): void => {
+          if (finalSessionId) {
+            onEvent({ type: 'final', text, providerSessionId: finalSessionId });
+          } else {
+            onEvent({ type: 'final', text });
+          }
+        };
+
         const handleLine = (line: string, source: 'stdout' | 'stderr'): void => {
           const parsed = safeJsonParse(line);
           if (!parsed || typeof parsed !== 'object') {
+            if (line.trim()) {
+              onEvent({ type: 'raw_line', line });
+            }
             if (source === 'stdout') {
               pushLine(stdoutLines, line);
             } else {
@@ -569,6 +587,7 @@ export function runCodexPrompt({
           sawJson = true;
           const ev = parsed as CodexEvent;
           const normalized = normalizeEvent(ev);
+          onEvent({ type: 'provider_event', provider: 'codex', event: normalized });
           const sid = extractSessionId(ev);
           if (sid) finalSessionId = sid;
 
@@ -601,13 +620,15 @@ export function runCodexPrompt({
           }
 
           if (isTerminalEvent(ev) && !didFinalize) {
-            didFinalize = true;
-            onEvent({ type: 'final', text: aggregated });
             if (ev.type === 'turn.failed') {
               const message = ev.error?.message;
-              if (typeof message === 'string') {
-                onEvent({ type: 'error', message });
-              }
+              emitError(typeof message === 'string' ? message : 'Codex run failed');
+              didFinalize = true;
+              return;
+            }
+            if (!sawError) {
+              didFinalize = true;
+              emitFinal(aggregated);
             }
           }
         };
@@ -633,21 +654,21 @@ export function runCodexPrompt({
                 stdout: stdoutLines,
                 fallback,
               });
-              if (fallback) {
-                attemptResolve({ sessionId: finalSessionId, fallback: true });
-                return;
-              }
-              onEvent({ type: 'error', message: `Codex exited with code ${code}${suffix}` });
-            } else {
-              onEvent({ type: 'final', text: aggregated });
+            if (fallback) {
+              attemptResolve({ sessionId: finalSessionId, fallback: true });
+              return;
             }
+            emitError(`Codex exited with code ${code}${suffix}`);
+          } else if (!sawError) {
+            emitFinal(aggregated);
           }
-          attemptResolve({ sessionId: finalSessionId, fallback: false });
-        });
+        }
+        attemptResolve({ sessionId: finalSessionId, fallback: false });
+      });
 
         child.on('error', (err: Error) => {
           debugLog('Codex', 'spawn-error', { message: err?.message });
-          onEvent({ type: 'error', message: err?.message ?? 'Codex failed to start' });
+          emitError(err?.message ?? 'Codex failed to start');
           attemptResolve({ sessionId: finalSessionId, fallback: false });
         });
       });

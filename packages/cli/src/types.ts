@@ -147,9 +147,13 @@ export interface ProviderLoginOptions {
 }
 
 export interface SessionEvent {
-  type: 'delta' | 'final' | 'usage' | 'status' | 'error';
+  type: 'delta' | 'final' | 'usage' | 'status' | 'error' | 'raw_line' | 'provider_event';
   text?: string;
   message?: string;
+  line?: string;
+  provider?: ProviderId;
+  event?: Record<string, unknown>;
+  providerSessionId?: string | null;
   inputTokens?: number;
   outputTokens?: number;
 }
@@ -195,6 +199,8 @@ export interface SessionState {
   model: string;
   providerSessionId: string | null;
   reasoningEffort: string | null;
+  cwd?: string;
+  repoRoot?: string;
 }
 
 export interface BackendState {

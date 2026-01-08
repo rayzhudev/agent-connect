@@ -13,7 +13,7 @@ spec, schemas, app templates, and a reference app to maximize developer speed.
 - `schemas/`: JSON schemas for ACP and app manifests.
 - `scripts/new-app.mjs`: app scaffold script.
 - `templates/app/`: starter app template.
-- `apps/ai-writing-assistant/`: reference consumer app.
+- `apps/agentic-notes/`: reference consumer app.
 - `packages/`: SDK, UI, and CLI sources (app devs should not edit).
 - `LICENSE`: MIT.
 
@@ -69,6 +69,14 @@ agentconnect dev --app . --ui http://localhost:5173
 
 5. Open the app in the browser and use the login UI to install and sign in to a
    provider. The app connects via AgentConnect without code changes.
+
+## Build the packages (local development)
+
+The SDK and CLI are published from `dist/`. Build them before running apps in this repo:
+
+```bash
+bun run build
+```
 
 ## Using the SDK before publish
 
@@ -127,7 +135,48 @@ session.on('final', (event) => {
   console.log('Final:', event.text);
 });
 
+session.on('error', (event) => {
+  console.error('Agent error:', event.message);
+});
+
 await session.send('Summarize the following draft in 3 bullets...');
+```
+
+Session context and resume:
+
+```ts
+const session = await client.sessions.create({
+  model: 'codex',
+  cwd: '/path/to/project',
+  repoRoot: '/path/to/project',
+});
+
+session.on('final', (event) => {
+  console.log('Session id:', event.providerSessionId);
+});
+
+await session.send('Audit the README for clarity.', {
+  cwd: '/path/to/project/docs',
+});
+
+await client.sessions.resume('sess_123', {
+  providerSessionId: 'provider-session-id',
+  cwd: '/path/to/project',
+});
+```
+
+Additional session events:
+
+```ts
+session.on('raw_line', (event) => {
+  console.log('CLI:', event.line);
+});
+
+session.on('provider_event', (event) => {
+  if (event.provider === 'codex') {
+    console.log('Codex event:', event.event);
+  }
+});
 ```
 
 Node usage:
@@ -238,6 +287,14 @@ Expected endpoints:
 
 - `GET /v1/models` -> `{ data: [{ id: "model-id" }] }`
 - `POST /v1/chat/completions` -> `{ choices: [{ message: { content: "..." } }] }`
+
+## Project docs
+
+- `CONTRIBUTING.md`
+- `CODE_OF_CONDUCT.md`
+- `SECURITY.md`
+- `CHANGELOG.md`
+- `docs/SDK.md`
 - If streaming is available, the host emits `delta` events as data arrives.
 
 ## AI runbook (command-only)

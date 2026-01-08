@@ -107,6 +107,7 @@ Provider management:
 Model discovery:
 
 - `acp.models.list`
+- `acp.models.recent`
 - `acp.models.info`
 
 Sessions:
@@ -148,7 +149,7 @@ Events are pushed to the client over the same WebSocket:
   "method": "acp.session.event",
   "params": {
     "sessionId": "sess_123",
-    "type": "delta" | "final" | "usage" | "status" | "error",
+    "type": "delta" | "final" | "usage" | "status" | "error" | "raw_line" | "provider_event",
     "data": { ... }
   }
 }
@@ -181,6 +182,7 @@ Method map (method -> params/result defs):
 - `acp.providers.login`: `ProviderLoginParams` / `ProviderLoginResult`
 - `acp.providers.logout`: `ProviderLoginParams` / `ProviderLoginResult`
 - `acp.models.list`: `ModelsListParams` / `ModelsListResult`
+- `acp.models.recent`: `ModelsRecentParams` / `ModelsRecentResult`
 - `acp.models.info`: `ModelsInfoParams` / `ModelsInfoResult`
 - `acp.sessions.create`: `SessionCreateParams` / `SessionCreateResult`
 - `acp.sessions.resume`: `SessionResumeParams` / `SessionResumeResult`
@@ -233,8 +235,8 @@ Example:
 
 ```
 {
-  "id": "com.agentconnect.ai-writing-assistant",
-  "name": "AI Writing Assistant",
+  "id": "com.agentconnect.agentic-notes",
+  "name": "Agentic Notes",
   "version": "0.1.0",
   "entry": {
     "type": "web",
@@ -257,9 +259,9 @@ Example:
     "backend.run"
   ],
   "providers": ["claude", "codex", "local"],
-  "models": { "default": "claude-opus" },
+  "models": { "default": "claude-sonnet" },
   "icon": "icon.png",
-  "repo": "https://github.com/example/ai-writing-assistant",
+  "repo": "https://github.com/example/agentic-notes",
   "license": "MIT",
   "author": { "name": "Example", "url": "https://example.com" }
 }
@@ -367,10 +369,12 @@ export type ModelInfo = {
 
 export type SessionEvent =
   | { type: 'delta'; text: string }
-  | { type: 'final'; text: string }
+  | { type: 'final'; text: string; providerSessionId?: string | null }
   | { type: 'usage'; usage: Record<string, number> }
   | { type: 'status'; status: 'thinking' | 'idle' | 'error'; error?: string }
-  | { type: 'error'; message: string };
+  | { type: 'error'; message: string }
+  | { type: 'raw_line'; line: string }
+  | { type: 'provider_event'; provider?: ProviderId; event: Record<string, unknown> };
 
 export type ProviderLoginOptions = {
   baseUrl?: string;
@@ -390,14 +394,30 @@ export type SessionCreateOptions = {
   reasoningEffort?: string;
   system?: string;
   metadata?: Record<string, unknown>;
+  cwd?: string;
+  repoRoot?: string;
   temperature?: number;
   maxTokens?: number;
   topP?: number;
 };
 
+export type SessionSendOptions = {
+  metadata?: Record<string, unknown>;
+  cwd?: string;
+  repoRoot?: string;
+};
+
+export type SessionResumeOptions = {
+  model?: string;
+  reasoningEffort?: string;
+  providerSessionId?: string | null;
+  cwd?: string;
+  repoRoot?: string;
+};
+
 export interface AgentConnectSession {
   id: string;
-  send(message: string, metadata?: Record<string, unknown>): Promise<void>;
+  send(message: string, options?: SessionSendOptions | Record<string, unknown>): Promise<void>;
   cancel(): Promise<void>;
   close(): Promise<void>;
   on(type: SessionEvent['type'], handler: (ev: SessionEvent) => void): () => void;
@@ -424,12 +444,13 @@ export interface AgentConnectClient {
 
   models: {
     list(provider?: ProviderId): Promise<ModelInfo[]>;
+    recent(provider?: ProviderId): Promise<ModelInfo[]>;
     info(model: string): Promise<ModelInfo>;
   };
 
   sessions: {
     create(options: SessionCreateOptions): Promise<AgentConnectSession>;
-    resume(sessionId: string): Promise<AgentConnectSession>;
+    resume(sessionId: string, options?: SessionResumeOptions): Promise<AgentConnectSession>;
   };
 
   fs: {

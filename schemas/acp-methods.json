@@ -155,6 +155,19 @@
       },
       "additionalProperties": false
     },
+    "ModelsRecentParams": {
+      "type": "object",
+      "properties": { "provider": { "$ref": "#/$defs/ProviderId" } },
+      "additionalProperties": false
+    },
+    "ModelsRecentResult": {
+      "type": "object",
+      "required": ["models"],
+      "properties": {
+        "models": { "type": "array", "items": { "$ref": "#/$defs/ModelInfo" } }
+      },
+      "additionalProperties": false
+    },
     "ModelsInfoParams": {
       "type": "object",
       "required": ["model"],
@@ -175,6 +188,8 @@
         "reasoningEffort": { "type": "string" },
         "system": { "type": "string" },
         "metadata": { "type": "object" },
+        "cwd": { "type": "string" },
+        "repoRoot": { "type": "string" },
         "temperature": { "type": "number", "minimum": 0, "maximum": 2 },
         "maxTokens": { "type": "integer", "minimum": 1 },
         "topP": { "type": "number", "minimum": 0, "maximum": 1 }
@@ -190,7 +205,14 @@
     "SessionResumeParams": {
       "type": "object",
       "required": ["sessionId"],
-      "properties": { "sessionId": { "$ref": "#/$defs/SessionId" } },
+      "properties": {
+        "sessionId": { "$ref": "#/$defs/SessionId" },
+        "model": { "$ref": "#/$defs/ModelId" },
+        "reasoningEffort": { "type": "string" },
+        "providerSessionId": { "type": "string" },
+        "cwd": { "type": "string" },
+        "repoRoot": { "type": "string" }
+      },
       "additionalProperties": false
     },
     "SessionResumeResult": {
@@ -213,7 +235,9 @@
           },
           "additionalProperties": false
         },
-        "metadata": { "type": "object" }
+        "metadata": { "type": "object" },
+        "cwd": { "type": "string" },
+        "repoRoot": { "type": "string" }
       },
       "additionalProperties": false
     },

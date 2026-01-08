@@ -1,5 +1,12 @@
 import type { Provider, ProviderId, ModelInfo } from '../types.js';
-import { ensureClaudeInstalled, getClaudeStatus, loginClaude, runClaudePrompt } from './claude.js';
+import {
+  ensureClaudeInstalled,
+  getClaudeStatus,
+  listClaudeModels,
+  listClaudeRecentModels,
+  loginClaude,
+  runClaudePrompt,
+} from './claude.js';
 import {
   ensureCodexInstalled,
   getCodexStatus,
@@ -46,11 +53,10 @@ export const providers: Record<ProviderId, Provider> = {
 };
 
 export async function listModels(): Promise<ModelInfo[]> {
+  const claudeModels = await listClaudeModels();
   const codexModels = await listCodexModels();
   const base: ModelInfo[] = [
-    { id: 'claude-opus', provider: 'claude', displayName: 'Claude Opus' },
-    { id: 'claude-sonnet', provider: 'claude', displayName: 'Claude Sonnet' },
-    { id: 'claude-haiku', provider: 'claude', displayName: 'Claude Haiku' },
+    ...claudeModels,
     { id: 'local', provider: 'local', displayName: 'Local Model' },
   ];
   const envModels = process.env.AGENTCONNECT_LOCAL_MODELS;
@@ -77,6 +83,14 @@ export async function listModels(): Promise<ModelInfo[]> {
     seen.add(key);
     return true;
   });
+}
+
+export async function listRecentModels(
+  providerId?: ProviderId
+): Promise<ModelInfo[]> {
+  if (providerId && providerId !== 'claude') return [];
+  const recent = await listClaudeRecentModels();
+  return recent.filter((entry) => entry.provider === 'claude');
 }
 
 export function resolveProviderForModel(model: string | undefined): ProviderId {

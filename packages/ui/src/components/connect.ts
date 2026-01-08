@@ -38,10 +38,17 @@ export class AgentConnectConnect extends HTMLElement {
   private prefetching: boolean;
   private busy: boolean;
   private busyMessage: string | null;
+  private isSelectingModel: boolean;
+  private pendingModelRender: boolean;
+  private popoverLocked: boolean;
+  private popoverPosition: { top: number; left: number } | null;
+  private modelsProvider: ProviderId | null;
+  private modelsFetchedAt: number;
   private elements: ConnectComponentElements | null;
   private handleResize: () => void;
   private loginPollTimer: ReturnType<typeof setInterval> | null;
   private readonly loginPollIntervalMs = 2000;
+  private readonly modelsRefreshIntervalMs = 30_000;
 
   constructor() {
     super();
@@ -51,11 +58,17 @@ export class AgentConnectConnect extends HTMLElement {
     this.prefetching = false;
     this.busy = false;
     this.busyMessage = null;
+    this.isSelectingModel = false;
+    this.pendingModelRender = false;
+    this.popoverLocked = false;
+    this.popoverPosition = null;
+    this.modelsProvider = null;
+    this.modelsFetchedAt = 0;
     this.elements = null;
     this.loginPollTimer = null;
     this.handleResize = () => {
       if (this.state.view === 'connected' && this.elements?.overlay?.classList.contains('open')) {
-        this.positionPopover();
+        this.positionPopover(true);
       }
     };
   }
@@ -170,6 +183,21 @@ export class AgentConnectConnect extends HTMLElement {
         false,
         this.state.selectedReasoningEffort
       );
+      this.isSelectingModel = false;
+      this.flushModelRender();
+    });
+
+    connectedModelSelect?.addEventListener('pointerdown', () => {
+      this.isSelectingModel = true;
+    });
+
+    connectedModelSelect?.addEventListener('focus', () => {
+      this.isSelectingModel = true;
+    });
+
+    connectedModelSelect?.addEventListener('blur', () => {
+      this.isSelectingModel = false;
+      this.flushModelRender();
     });
 
     connectedEffortSelect?.addEventListener('change', () => {
@@ -197,12 +225,18 @@ export class AgentConnectConnect extends HTMLElement {
     }
     this.setView(this.state.connected ? 'connected' : 'connect');
     this.refresh();
-    this.startLoginPolling();
+    if (!this.state.models.length) {
+      this.startLoginPolling();
+    } else {
+      this.stopLoginPolling();
+    }
   }
 
   private close(): void {
     this.elements?.overlay?.classList.remove('open');
     this.stopLoginPolling();
+    this.popoverLocked = false;
+    this.popoverPosition = null;
   }
 
   private setView(view: ConnectViewType): void {
@@ -218,6 +252,13 @@ export class AgentConnectConnect extends HTMLElement {
       this.populateLocalForm();
     }
     if (view === 'connected') {
+      this.popoverLocked = false;
+      this.popoverPosition = null;
+      if (!this.state.models.length) {
+        this.startLoginPolling();
+      } else {
+        this.stopLoginPolling();
+      }
       this.renderConnectedModels();
       this.renderReasoningEfforts();
       requestAnimationFrame(() => this.positionPopover());
@@ -230,9 +271,14 @@ export class AgentConnectConnect extends HTMLElement {
     panel.dataset.active = active ? 'true' : 'false';
   }
 
-  private positionPopover(): void {
+  private positionPopover(force = false): void {
     const { overlay, button, popoverPanel } = this.elements ?? {};
     if (!overlay || !button || !popoverPanel) return;
+    if (this.popoverLocked && this.popoverPosition && !force) {
+      setCssVar(overlay, '--ac-popover-top', `${this.popoverPosition.top}px`);
+      setCssVar(overlay, '--ac-popover-left', `${this.popoverPosition.left}px`);
+      return;
+    }
     const rect = button.getBoundingClientRect();
     const panelRect = popoverPanel.getBoundingClientRect();
     const panelWidth = panelRect.width || 320;
@@ -247,8 +293,12 @@ export class AgentConnectConnect extends HTMLElement {
     if (top + panelHeight > window.innerHeight - 12) {
       top = rect.top - panelHeight - gap;
     }
-    setCssVar(overlay, '--ac-popover-top', `${Math.max(12, top)}px`);
-    setCssVar(overlay, '--ac-popover-left', `${Math.max(12, left)}px`);
+    const finalTop = Math.max(12, top);
+    const finalLeft = Math.max(12, left);
+    this.popoverPosition = { top: finalTop, left: finalLeft };
+    this.popoverLocked = true;
+    setCssVar(overlay, '--ac-popover-top', `${finalTop}px`);
+    setCssVar(overlay, '--ac-popover-left', `${finalLeft}px`);
   }
 
   private hasLocalConfig(): boolean {
@@ -325,7 +375,14 @@ export class AgentConnectConnect extends HTMLElement {
       } else if (!this.state.selectedProvider) {
         this.state.selectedProvider = providers[0]?.id || null;
       }
-      await this.refreshModels();
+      const shouldRefreshModels =
+        !this.state.selectedProvider ||
+        this.state.models.length === 0 ||
+        this.modelsProvider !== this.state.selectedProvider ||
+        Date.now() - this.modelsFetchedAt > this.modelsRefreshIntervalMs;
+      if (shouldRefreshModels) {
+        await this.refreshModels();
+      }
       if (this.state.connected && this.state.selectedModel) {
         const effortChanged =
           this.state.connected.reasoningEffort !== this.state.selectedReasoningEffort;
@@ -381,9 +438,14 @@ export class AgentConnectConnect extends HTMLElement {
     const previous = this.state.providers;
     const providers = await client.providers.list();
     this.state.providers = providers;
-    this.renderProviders();
-    this.updatePopoverTitle();
-    this.updateButtonLabel();
+    if (this.state.view === 'connected') {
+      this.updatePopoverTitle();
+      this.updateButtonLabel();
+    } else {
+      this.renderProviders();
+      this.updatePopoverTitle();
+      this.updateButtonLabel();
+    }
 
     const selected = this.state.selectedProvider;
     if (!selected) return;
@@ -394,13 +456,25 @@ export class AgentConnectConnect extends HTMLElement {
       this.renderConnectedModels();
       this.renderReasoningEfforts();
     }
+    if (after?.loggedIn && this.state.models.length > 0) {
+      this.stopLoginPolling();
+    }
   }
 
   private async prefetchProviders(): Promise<void> {
     if (this.prefetching) return;
     this.prefetching = true;
     await this.refresh({ silent: true });
+    await this.prefetchAllProviderModels();
     this.prefetching = false;
+  }
+
+  private async prefetchAllProviderModels(): Promise<void> {
+    if (!this.state.providers.length) return;
+    const client = await getClient();
+    await Promise.allSettled(
+      this.state.providers.map((provider) => client.models.list(provider.id))
+    );
   }
 
   private async refreshModels(): Promise<void> {
@@ -411,11 +485,12 @@ export class AgentConnectConnect extends HTMLElement {
     }
     this.state.modelsLoading = true;
     this.renderConnectedModels();
+    const providerId = this.state.selectedProvider;
     try {
       const client = await getClient();
-      const models = await client.models.list(this.state.selectedProvider);
+      const models = await client.models.list(providerId);
       let resolvedModels: ModelInfo[] = models;
-      if (this.state.selectedProvider === 'local') {
+      if (providerId === 'local') {
         const localOptions = this.getLocalModelOptions();
         if (localOptions.length) {
           const merged = [...localOptions, ...models];
@@ -428,6 +503,8 @@ export class AgentConnectConnect extends HTMLElement {
         }
       }
       this.state.models = resolvedModels;
+      this.modelsProvider = providerId;
+      this.modelsFetchedAt = Date.now();
       if (
         !this.state.selectedModel ||
         !resolvedModels.find((m) => m.id === this.state.selectedModel)
@@ -523,7 +600,7 @@ export class AgentConnectConnect extends HTMLElement {
     const pending = provider.pending === true;
     const isLocal = provider.id === 'local';
     const hasLocalConfig = this.hasLocalConfig();
-    const terminalLogin = provider.id === 'claude' && this.state.loginExperience === 'terminal';
+    const isConnected = this.state.connected?.provider === provider.id;
     if (pending) return 'Checking...';
     if (isLocal) {
       if (!hasLocalConfig) return 'Needs setup';
@@ -531,7 +608,8 @@ export class AgentConnectConnect extends HTMLElement {
     }
     if (!provider.installed) return 'Not installed';
     if (!provider.loggedIn) return 'Login needed';
-    return '';
+    if (isConnected) return 'Connected';
+    return 'Detected';
   }
 
   private buildProviderAction(provider: ProviderInfoWithPending): HTMLButtonElement | null {
@@ -565,12 +643,8 @@ export class AgentConnectConnect extends HTMLElement {
       }
       return button;
     }
-    if (isConnected) {
-      const button = this.buildActionButton('Connected', true);
-      button.classList.add('ghost');
-      return button;
-    }
-    return this.buildActionButton('Detected', true);
+    if (isConnected) return null;
+    return null;
   }
 
   private buildActionButton(
@@ -789,6 +863,12 @@ export class AgentConnectConnect extends HTMLElement {
     const { connectedModelSelect, modelLoading } = this.elements ?? {};
     if (!connectedModelSelect) return;
 
+    if (this.isSelectingModel) {
+      this.pendingModelRender = true;
+      return;
+    }
+    this.pendingModelRender = false;
+
     if (this.state.modelsLoading) {
       connectedModelSelect.style.display = 'none';
       if (modelLoading) modelLoading.style.display = 'flex';
@@ -800,6 +880,11 @@ export class AgentConnectConnect extends HTMLElement {
 
     connectedModelSelect.innerHTML = '';
     if (!this.state.models.length) {
+      if (!this.modelsFetchedAt) {
+        connectedModelSelect.style.display = 'none';
+        if (modelLoading) modelLoading.style.display = 'flex';
+        return;
+      }
       const option = document.createElement('option');
       option.value = '';
       option.textContent = 'No models available';
@@ -819,6 +904,12 @@ export class AgentConnectConnect extends HTMLElement {
     if (this.state.selectedModel) {
       connectedModelSelect.value = this.state.selectedModel;
     }
+  }
+
+  private flushModelRender(): void {
+    if (!this.pendingModelRender) return;
+    this.pendingModelRender = false;
+    this.renderConnectedModels();
   }
 
   private getReasoningEffortsForModel(modelId: string | null): Array<{ id: string; label?: string }> {
@@ -894,6 +985,7 @@ export class AgentConnectConnect extends HTMLElement {
     if (!button) return;
     if (!this.state.connected) {
       button.textContent = 'Connect Agent';
+      button.removeAttribute('aria-label');
       return;
     }
     const providerName =
@@ -902,7 +994,62 @@ export class AgentConnectConnect extends HTMLElement {
     const effort = this.state.connected.reasoningEffort
       ? ` · ${this.state.connected.reasoningEffort}`
       : '';
-    button.textContent = `${providerName} · ${this.state.connected.model}${effort}`;
+    const providerId = this.state.connected.provider;
+    const modelLabel = this.formatButtonModelLabel(
+      providerId,
+      this.state.connected.model,
+      providerName
+    );
+    const label = `${modelLabel}${effort}`;
+    const ariaLabel = `${providerName} · ${modelLabel}${effort}`;
+    const iconSvg = PROVIDER_ICONS[providerId] ?? null;
+    this.renderConnectButtonContent(label, iconSvg, providerId, ariaLabel);
+  }
+
+  private formatButtonModelLabel(
+    providerId: ProviderId,
+    model: string | null,
+    fallback: string
+  ): string {
+    const value = model || fallback;
+    if (providerId !== 'claude') return value;
+    const normalized = value.trim().toLowerCase();
+    const map: Record<string, string> = {
+      default: 'Default',
+      sonnet: 'Sonnet',
+      haiku: 'Haiku',
+      opus: 'Opus',
+    };
+    return map[normalized] || value;
+  }
+
+  private renderConnectButtonContent(
+    label: string,
+    iconSvg: string | null,
+    providerId: ProviderId,
+    ariaLabel?: string
+  ): void {
+    const { button } = this.elements ?? {};
+    if (!button) return;
+    button.replaceChildren();
+    if (ariaLabel) {
+      button.setAttribute('aria-label', ariaLabel);
+    } else {
+      button.removeAttribute('aria-label');
+    }
+    if (!iconSvg) {
+      button.textContent = label;
+      return;
+    }
+    const icon = document.createElement('span');
+    icon.className = 'ac-connect-icon';
+    icon.dataset.provider = providerId;
+    icon.setAttribute('aria-hidden', 'true');
+    icon.innerHTML = iconSvg;
+    const text = document.createElement('span');
+    text.className = 'ac-connect-label';
+    text.textContent = label;
+    button.append(icon, text);
   }
 
   private applySelection(

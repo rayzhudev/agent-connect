@@ -9,6 +9,7 @@ import type {
   RunPromptResult,
   InstallResult,
   ProviderLoginOptions,
+  ModelInfo,
 } from '../types.js';
 import {
   buildInstallCommand,
@@ -30,12 +31,110 @@ const INSTALL_WINDOWS_CMD =
   'curl -fsSL https://claude.ai/install.cmd -o install.cmd && install.cmd && del install.cmd';
 const DEFAULT_LOGIN = '';
 const DEFAULT_STATUS = '';
+const CLAUDE_MODELS_CACHE_TTL_MS = 60_000;
+const CLAUDE_RECENT_MODELS_CACHE_TTL_MS = 60_000;
+let claudeModelsCache: ModelInfo[] | null = null;
+let claudeModelsCacheAt = 0;
+let claudeRecentModelsCache: ModelInfo[] | null = null;
+let claudeRecentModelsCacheAt = 0;
+
+const DEFAULT_CLAUDE_MODELS = [
+  {
+    id: 'default',
+    displayName: 'Default · Opus 4.5',
+  },
+  {
+    id: 'sonnet',
+    displayName: 'Sonnet 4.5',
+  },
+  {
+    id: 'haiku',
+    displayName: 'Haiku 4.5',
+  },
+  {
+    id: 'opus',
+    displayName: 'Opus',
+  },
+];
 
 export function getClaudeCommand(): string {
   const override = process.env.AGENTCONNECT_CLAUDE_COMMAND;
   const base = override || 'claude';
   const resolved = resolveCommandPath(base);
   return resolved || resolveWindowsCommand(base);
+}
+
+function getClaudeConfigDir(): string {
+  return process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude');
+}
+
+function formatClaudeDisplayName(modelId: string): string {
+  const value = modelId.trim();
+  if (!value.startsWith('claude-')) return value;
+  const parts = value.replace(/^claude-/, '').split('-').filter(Boolean);
+  if (!parts.length) return value;
+  const family = parts[0];
+  const numeric = parts.slice(1).filter((entry) => /^\d+$/.test(entry));
+  let version = '';
+  if (numeric.length >= 2) {
+    version = `${numeric[0]}.${numeric[1]}`;
+  } else if (numeric.length === 1) {
+    version = numeric[0];
+  }
+  const familyLabel = family.charAt(0).toUpperCase() + family.slice(1);
+  return `Claude ${familyLabel}${version ? ` ${version}` : ''}`;
+}
+
+async function readClaudeStatsModels(): Promise<string[]> {
+  const statsPath = path.join(getClaudeConfigDir(), 'stats-cache.json');
+  try {
+    const raw = await readFile(statsPath, 'utf8');
+    const parsed = JSON.parse(raw) as { modelUsage?: Record<string, unknown> } | null;
+    const usage = parsed?.modelUsage;
+    if (!usage || typeof usage !== 'object') return [];
+    return Object.keys(usage).filter(Boolean);
+  } catch {
+    return [];
+  }
+}
+
+export async function listClaudeModels(): Promise<ModelInfo[]> {
+  if (claudeModelsCache && Date.now() - claudeModelsCacheAt < CLAUDE_MODELS_CACHE_TTL_MS) {
+    return claudeModelsCache;
+  }
+  const list = DEFAULT_CLAUDE_MODELS.map((entry) => ({
+    id: entry.id,
+    provider: 'claude' as const,
+    displayName: entry.displayName,
+  }));
+  claudeModelsCache = list;
+  claudeModelsCacheAt = Date.now();
+  return list;
+}
+
+export async function listClaudeRecentModels(): Promise<ModelInfo[]> {
+  if (
+    claudeRecentModelsCache &&
+    Date.now() - claudeRecentModelsCacheAt < CLAUDE_RECENT_MODELS_CACHE_TTL_MS
+  ) {
+    return claudeRecentModelsCache;
+  }
+  const discovered = await readClaudeStatsModels();
+  const mapped: ModelInfo[] = [];
+  const seen = new Set<string>();
+  for (const modelId of discovered) {
+    const id = modelId.trim();
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+    mapped.push({
+      id,
+      provider: 'claude',
+      displayName: formatClaudeDisplayName(id),
+    });
+  }
+  claudeRecentModelsCache = mapped;
+  claudeRecentModelsCacheAt = Date.now();
+  return mapped;
 }
 
 function getClaudeAuthPaths(): string[] {
@@ -499,6 +598,8 @@ function safeJsonParse(line: string): unknown {
 function mapClaudeModel(model: string | undefined): string | null {
   if (!model) return null;
   const value = String(model).toLowerCase();
+  if (value === 'default' || value === 'recommended') return null;
+  if (value === 'claude-default' || value === 'claude-recommended') return null;
   if (value.includes('opus')) return 'opus';
   if (value.includes('sonnet')) return 'sonnet';
   if (value.includes('haiku')) return 'haiku';
@@ -603,10 +704,30 @@ export function runClaudePrompt({
     let aggregated = '';
     let finalSessionId: string | null = null;
     let didFinalize = false;
+    let sawError = false;
+
+    const emitError = (message: string): void => {
+      if (sawError) return;
+      sawError = true;
+      onEvent({ type: 'error', message });
+    };
+
+    const emitFinal = (text: string): void => {
+      if (finalSessionId) {
+        onEvent({ type: 'final', text, providerSessionId: finalSessionId });
+      } else {
+        onEvent({ type: 'final', text });
+      }
+    };
 
     const handleLine = (line: string): void => {
       const parsed = safeJsonParse(line);
-      if (!parsed || typeof parsed !== 'object') return;
+      if (!parsed || typeof parsed !== 'object') {
+        if (line.trim()) {
+          onEvent({ type: 'raw_line', line });
+        }
+        return;
+      }
       const msg = parsed as ClaudeMessage;
 
       const sid = extractSessionId(msg);
@@ -627,9 +748,9 @@ export function runClaudePrompt({
       }
 
       const result = extractResultText(msg);
-      if (result && !didFinalize) {
+      if (result && !didFinalize && !sawError) {
         didFinalize = true;
-        onEvent({ type: 'final', text: aggregated || result });
+        emitFinal(aggregated || result);
       }
     };
 
@@ -642,16 +763,16 @@ export function runClaudePrompt({
     child.on('close', (code) => {
       if (!didFinalize) {
         if (code && code !== 0) {
-          onEvent({ type: 'error', message: `Claude exited with code ${code}` });
-        } else {
-          onEvent({ type: 'final', text: aggregated });
+          emitError(`Claude exited with code ${code}`);
+        } else if (!sawError) {
+          emitFinal(aggregated);
         }
       }
       resolve({ sessionId: finalSessionId });
     });
 
     child.on('error', (err: Error) => {
-      onEvent({ type: 'error', message: err?.message ?? 'Claude failed to start' });
+      emitError(err?.message ?? 'Claude failed to start');
       resolve({ sessionId: finalSessionId });
     });
   });
