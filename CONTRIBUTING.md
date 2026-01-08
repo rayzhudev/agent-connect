@@ -33,4 +33,4 @@ bun run format:check
 - Keep changes small and focused.
 - Prefer clear TypeScript types and predictable APIs.
 - Avoid adding new tracking systems or TODO lists in markdown files.
-- If you touch protocol behavior, update `SPEC.md`.
+- If you touch protocol behavior, update `docs/PROTOCOL.md`.

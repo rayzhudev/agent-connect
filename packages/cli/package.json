@@ -1,6 +1,6 @@
 {
   "name": "@agentconnect/cli",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "license": "MIT",
   "type": "module",
   "homepage": "https://github.com/rayzhudev/agent-connect",
@@ -12,11 +12,18 @@
   "bugs": {
     "url": "https://github.com/rayzhudev/agent-connect/issues"
   },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
   "bin": {
     "agentconnect": "dist/index.js"
   },
-  "main": "./dist/index.js",
-  "types": "./dist/index.d.ts",
   "files": [
     "dist"
   ],

@@ -60,4 +60,4 @@ Runs in any modern browser. An AgentConnect host must be available (CLI dev host
 
 ## Docs
 
-See `docs/SDK.md` in the repo for the full SDK reference and `SPEC.md` for the protocol contract.
+See `docs/SDK.md` in the repo for the full SDK reference and `docs/PROTOCOL.md` for the protocol contract.
