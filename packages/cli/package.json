@@ -13,7 +13,7 @@
     "url": "https://github.com/rayzhudev/agent-connect/issues"
   },
   "bin": {
-    "agentconnect": "./dist/index.js"
+    "agentconnect": "dist/index.js"
   },
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
