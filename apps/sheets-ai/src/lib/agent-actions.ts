@@ -19,7 +19,7 @@ function parseJsonPayload(raw: string): SpreadsheetAction[] {
   }
 }
 
-function isAction(action: any): action is SpreadsheetAction {
+function isAction(action: unknown): action is SpreadsheetAction {
   if (!action || typeof action !== 'object') return false
   if (action.type === 'set_cell') {
     return Number.isFinite(action.row) && Number.isFinite(action.col)

@@ -118,10 +118,17 @@ Run the Next.js example with a Node backend (auto-starts the AgentConnect host):
 bun --cwd apps/sheets-ai dev
 ```
 
+Run the subscription audit example (file upload + analysis backend):
+
+```bash
+bun --cwd apps/subscription-audit dev
+```
+
 ## Examples
 
 - `apps/agentic-notes`: client-only notes assistant (requires running the AgentConnect host).
 - `apps/sheets-ai`: spreadsheet + agent example with a Node backend (starts the host automatically).
+- `apps/subscription-audit`: subscription audit app with file upload + analysis backend.
 
 ## Registry (GitHub)
 

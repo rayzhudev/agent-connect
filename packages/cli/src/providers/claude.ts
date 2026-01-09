@@ -147,7 +147,19 @@ function getClaudeAuthPaths(): string[] {
 }
 
 type ClaudeLoginMethod = 'claudeai' | 'console';
-type PtyModule = typeof import('node-pty');
+type PtyModule = {
+  spawn: (
+    file: string,
+    args?: string[],
+    options?: {
+      name?: string;
+      cols?: number;
+      rows?: number;
+      cwd?: string;
+      env?: NodeJS.ProcessEnv;
+    }
+  ) => IPty;
+};
 type ClaudeLoginExperience = 'embedded' | 'terminal';
 
 function resolveClaudeTheme(): string {

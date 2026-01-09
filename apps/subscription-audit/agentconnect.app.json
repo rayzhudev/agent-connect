@@ -1,0 +1,14 @@
+{
+  "id": "com.agentconnect.subscription-audit",
+  "name": "Subscription Audit",
+  "version": "0.1.0",
+  "description": "Find recurring subscriptions and highlight savings opportunities from receipts and statements.",
+  "entry": {
+    "type": "web",
+    "path": ".next",
+    "devUrl": "http://localhost:3000"
+  },
+  "capabilities": ["agent.connect", "model.claude", "model.codex", "model.local"],
+  "providers": ["claude", "codex", "local"],
+  "models": { "default": "claude-sonnet" }
+}

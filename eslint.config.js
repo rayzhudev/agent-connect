@@ -6,7 +6,13 @@ import globals from 'globals';
 
 export default [
   {
-    ignores: ['**/node_modules/**', '**/dist/**', '**/.agentconnect/**', 'bun.lock'],
+    ignores: [
+      '**/node_modules/**',
+      '**/dist/**',
+      '**/.agentconnect/**',
+      '**/.next/**',
+      'bun.lock',
+    ],
   },
   eslint.configs.recommended,
   {
@@ -51,6 +57,12 @@ export default [
   },
   {
     files: ['apps/**/*.js', 'templates/app/**/*.js'],
+    ignores: [
+      '**/next.config.js',
+      '**/postcss.config.js',
+      '**/*.config.js',
+      '**/*.config.cjs',
+    ],
     languageOptions: {
       ecmaVersion: 'latest',
       sourceType: 'module',
@@ -73,6 +85,16 @@ export default [
     },
     rules: {
       'no-unused-vars': ['error', { argsIgnorePattern: '^_' }],
+    },
+  },
+  {
+    files: ['**/*.cjs', '**/next.config.js', '**/postcss.config.js', '**/vite.config.cjs'],
+    languageOptions: {
+      ecmaVersion: 'latest',
+      sourceType: 'script',
+      globals: {
+        ...globals.node,
+      },
     },
   },
   {
