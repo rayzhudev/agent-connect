@@ -18,7 +18,7 @@ const client = await AgentConnect.connect({
 ## Types
 
 ```ts
-export type ProviderId = 'claude' | 'codex' | 'local';
+export type ProviderId = 'claude' | 'codex' | 'cursor' | 'local';
 
 export type PackageManager = 'bun' | 'pnpm' | 'npm' | 'brew' | 'unknown';
 

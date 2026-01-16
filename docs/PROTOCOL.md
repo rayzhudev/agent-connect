@@ -3,7 +3,7 @@
 ## Summary
 
 AgentConnect is a host-agnostic SDK and protocol that lets apps use local AI agent CLIs
-(Claude Code, Codex CLI) and local models through a single interface. Apps run unchanged
+(Claude Code, Codex CLI, Cursor CLI) and local models through a single interface. Apps run unchanged
 in two environments:
 
 - Local development with a standalone AgentConnect host.
@@ -14,7 +14,7 @@ bundle their own backend service, but the host always launches and manages it.
 
 ## Goals
 
-- Provide a unified interface for Claude Code, Codex CLI, and local models.
+- Provide a unified interface for Claude Code, Codex CLI, Cursor CLI, and local models.
 - Allow apps to run locally and in a native host app with no code changes.
 - Support host-managed app backends for full local capabilities.
 - Offer one-click provider install and login, with a simple fallback path.
@@ -43,7 +43,7 @@ bundle their own backend service, but the host always launches and manages it.
 - App Backend (optional): Local service launched by the host.
 - AgentConnect Client SDK: JS library used by apps.
 - AgentConnect Host: native host app or standalone local dev host.
-- Provider Adapters: Claude CLI, Codex CLI, local model connectors.
+- Provider Adapters: Claude CLI, Codex CLI, Cursor CLI, local model connectors.
 - Public Registry: Signed manifests and package metadata.
 
 ### Architecture (simplified)
@@ -54,7 +54,7 @@ App UI (web) <-> AgentConnect SDK <-> Host (native host app or Dev Host)
                                        |  - backend manager
                                        |  - permissions metadata
                                        |  - registry trust
-                                       +-> Claude CLI / Codex CLI / Local model
+                                       +-> Claude CLI / Codex CLI / Cursor CLI / Local model
 ```
 
 ## Runtime Model
@@ -90,7 +90,7 @@ ACP uses JSON-RPC 2.0 over WebSocket or direct in-process bridge.
   "protocolVersion": "0.1",
   "mode": "hosted" | "local",
   "capabilities": ["fs.read", "process.spawn", "..."],
-  "providers": ["claude", "codex", "local"]
+  "providers": ["claude", "codex", "cursor", "local"]
 }
 ```
 
@@ -218,7 +218,7 @@ first run and stores the consent decision. There are no runtime popups.
 ### Common Capability Names
 
 - `agent.connect`
-- `model.claude`, `model.codex`, `model.local`
+- `model.claude`, `model.codex`, `model.cursor`, `model.local`
 - `fs.read`, `fs.write`, `fs.watch`
 - `process.spawn`, `process.kill`
 - `network.request`
@@ -258,7 +258,7 @@ Example:
     "process.spawn",
     "backend.run"
   ],
-  "providers": ["claude", "codex", "local"],
+  "providers": ["claude", "codex", "cursor", "local"],
   "models": { "default": "claude-sonnet" },
   "icon": "icon.png",
   "repo": "https://github.com/example/agentic-notes",
@@ -342,7 +342,7 @@ session.on("delta", (text) => render(text));
 ### SDK API (TypeScript)
 
 ```ts
-export type ProviderId = 'claude' | 'codex' | 'local';
+export type ProviderId = 'claude' | 'codex' | 'cursor' | 'local';
 
 export type ProviderInfo = {
   id: ProviderId;
@@ -547,7 +547,7 @@ Host apps can show curated verified apps, while allowing direct installs by name
 Host (native host app or local dev):
 
 - Implement ACP server with JSON-RPC 2.0 envelope validation.
-- Implement provider adapters for Claude CLI, Codex CLI, and local model backends.
+- Implement provider adapters for Claude CLI, Codex CLI, Cursor CLI, and local model backends.
 - Provide one-click install/login flows and fallback instructions.
 - Launch app backends with declared env and health checks.
 - Persist app consent for install-time permissions.

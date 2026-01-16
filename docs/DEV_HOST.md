@@ -20,7 +20,7 @@ agentconnect dev --app . --ui http://localhost:5173
 
 ## Provider configuration
 
-The host expects `claude` and `codex` CLIs on your PATH. Override commands with:
+The host expects `claude`, `codex`, and `cursor-agent` CLIs on your PATH. Override commands with:
 
 - `AGENTCONNECT_CLAUDE_COMMAND`
 - `AGENTCONNECT_CLAUDE_INSTALL`
@@ -30,6 +30,10 @@ The host expects `claude` and `codex` CLIs on your PATH. Override commands with:
 - `AGENTCONNECT_CODEX_INSTALL`
 - `AGENTCONNECT_CODEX_LOGIN`
 - `AGENTCONNECT_CODEX_STATUS`
+- `AGENTCONNECT_CURSOR_COMMAND`
+- `AGENTCONNECT_CURSOR_INSTALL`
+- `AGENTCONNECT_CURSOR_LOGIN`
+- `AGENTCONNECT_CURSOR_STATUS`
 
 Default login/status behaviors:
 
@@ -37,6 +41,15 @@ Default login/status behaviors:
 - Claude login runs `claude --print` with `/login` and checks for local auth files.
 - Codex login runs `codex login` and status uses `codex login status`.
 - For device auth, set `AGENTCONNECT_CODEX_LOGIN="codex login --device-auth"`.
+- Cursor install defaults to `curl https://cursor.com/install -fsS | bash`.
+- Cursor login runs `cursor-agent login` and status uses `cursor-agent status`.
+
+Cursor environment variables (optional):
+
+- `CURSOR_API_KEY` or `AGENTCONNECT_CURSOR_API_KEY` (non-interactive auth)
+- `AGENTCONNECT_CURSOR_ENDPOINT` (override API endpoint)
+- `AGENTCONNECT_CURSOR_MODEL` (default model ID)
+- `AGENTCONNECT_CURSOR_MODELS` (JSON array of model IDs)
 
 ## Local model support (OpenAI-compatible HTTP API)
 

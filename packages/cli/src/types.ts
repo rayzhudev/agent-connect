@@ -43,7 +43,7 @@ export interface RpcError {
 export type RpcResponse = RpcSuccess | RpcError;
 
 // App manifest types
-export type ProviderId = 'claude' | 'codex' | 'local';
+export type ProviderId = 'claude' | 'codex' | 'cursor' | 'local';
 
 export interface AppManifestEntry {
   type: 'web';
