@@ -172,6 +172,9 @@ export const connectButtonStyles = `
   .ac-connect .ac-connect-icon[data-provider="claude"] svg {
     fill: #d97757;
   }
+  .ac-connect .ac-connect-icon[data-provider="cursor"] svg {
+    fill: #26251e;
+  }
   .ac-connect .ac-button:hover:not([disabled]) {
     transform: translateY(-2px);
     background: linear-gradient(

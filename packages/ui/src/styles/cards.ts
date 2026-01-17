@@ -161,6 +161,21 @@ export const cardStyles = `
       inset 0 1px 0 rgba(255, 255, 255, 1),
       0 4px 16px rgba(32, 33, 35, 0.2);
   }
+  .ac-provider-icon[data-provider="cursor"] {
+    background: linear-gradient(145deg, #fbfaf6 0%, #f0ede6 100%);
+    border-color: rgba(38, 37, 30, 0.28);
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 1),
+      0 2px 8px rgba(38, 37, 30, 0.12);
+  }
+  .ac-provider-icon[data-provider="cursor"] svg {
+    fill: #26251e;
+  }
+  .ac-provider-card:hover .ac-provider-icon[data-provider="cursor"] {
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 1),
+      0 4px 16px rgba(38, 37, 30, 0.2);
+  }
   .ac-provider-icon[data-provider="local"] {
     background: linear-gradient(145deg, #f2f4f8 0%, #e4e8f0 100%);
     border-color: rgba(100, 116, 139, 0.4);

@@ -50,6 +50,15 @@ function sessionEvent(
   type: string,
   data: Record<string, unknown>
 ): void {
+  if (process.env.AGENTCONNECT_DEBUG?.trim()) {
+    try {
+      console.log(
+        `[AgentConnect][Session ${sessionId}] ${type} ${JSON.stringify(data)}`
+      );
+    } catch {
+      console.log(`[AgentConnect][Session ${sessionId}] ${type}`);
+    }
+  }
   send(socket, {
     jsonrpc: '2.0',
     method: 'acp.session.event',
@@ -340,6 +349,7 @@ export function startDevHost({
         const reasoningEffort = (params.reasoningEffort as string) || null;
         const cwd = params.cwd ? resolveAppPathInternal(params.cwd) : undefined;
         const repoRoot = params.repoRoot ? resolveAppPathInternal(params.repoRoot) : undefined;
+        const providerDetailLevel = (params.providerDetailLevel as string) || undefined;
         const providerId = resolveProviderForModel(model);
         recordModelCapability(model);
         sessions.set(sessionId, {
@@ -350,6 +360,10 @@ export function startDevHost({
           reasoningEffort,
           cwd,
           repoRoot,
+          providerDetailLevel:
+            providerDetailLevel === 'raw' || providerDetailLevel === 'minimal'
+              ? providerDetailLevel
+              : undefined,
         });
         reply(socket, id, { sessionId });
         return;
@@ -363,6 +377,7 @@ export function startDevHost({
           const reasoningEffort = (params.reasoningEffort as string) || null;
           const cwd = params.cwd ? resolveAppPathInternal(params.cwd) : undefined;
           const repoRoot = params.repoRoot ? resolveAppPathInternal(params.repoRoot) : undefined;
+          const providerDetailLevel = (params.providerDetailLevel as string) || undefined;
           recordModelCapability(model);
           sessions.set(sessionId, {
             id: sessionId,
@@ -372,6 +387,10 @@ export function startDevHost({
             reasoningEffort,
             cwd,
             repoRoot,
+            providerDetailLevel:
+              providerDetailLevel === 'raw' || providerDetailLevel === 'minimal'
+                ? providerDetailLevel
+                : undefined,
           });
         } else {
           if (params.providerSessionId) {
@@ -382,6 +401,12 @@ export function startDevHost({
           }
           if (params.repoRoot) {
             existing.repoRoot = resolveAppPathInternal(params.repoRoot);
+          }
+          if (params.providerDetailLevel) {
+            const level = String(params.providerDetailLevel);
+            if (level === 'raw' || level === 'minimal') {
+              existing.providerDetailLevel = level;
+            }
           }
           recordModelCapability(existing.model);
         }
@@ -419,6 +444,10 @@ export function startDevHost({
         const repoRoot = params.repoRoot
           ? resolveAppPathInternal(params.repoRoot)
           : session.repoRoot || basePath;
+        const providerDetailLevel =
+          params.providerDetailLevel === 'raw' || params.providerDetailLevel === 'minimal'
+            ? (params.providerDetailLevel as 'raw' | 'minimal')
+            : session.providerDetailLevel || 'minimal';
         activeRuns.set(sessionId, controller);
         let sawError = false;
 
@@ -430,6 +459,7 @@ export function startDevHost({
             reasoningEffort: session.reasoningEffort,
             repoRoot,
             cwd,
+            providerDetailLevel,
             signal: controller.signal,
             onEvent: (event) => {
               if (event.type === 'error') {

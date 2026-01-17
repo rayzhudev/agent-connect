@@ -319,6 +319,7 @@ export class AgentConnectConnect extends HTMLElement {
     return [
       { id: 'claude', name: 'Claude', installed: false, loggedIn: false, pending: true },
       { id: 'codex', name: 'Codex', installed: false, loggedIn: false, pending: true },
+      { id: 'cursor', name: 'Cursor', installed: false, loggedIn: false, pending: true },
       { id: 'local', name: 'Local', installed: false, loggedIn: false, pending: true },
     ];
   }

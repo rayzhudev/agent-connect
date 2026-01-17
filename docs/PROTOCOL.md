@@ -149,7 +149,7 @@ Events are pushed to the client over the same WebSocket:
   "method": "acp.session.event",
   "params": {
     "sessionId": "sess_123",
-    "type": "delta" | "final" | "usage" | "status" | "error" | "raw_line" | "provider_event",
+    "type": "delta" | "final" | "usage" | "status" | "error" | "raw_line" | "message" | "thinking" | "tool_call" | "detail",
     "data": { ... }
   }
 }
@@ -368,13 +368,22 @@ export type ModelInfo = {
 };
 
 export type SessionEvent =
-  | { type: 'delta'; text: string }
-  | { type: 'final'; text: string; providerSessionId?: string | null }
-  | { type: 'usage'; usage: Record<string, number> }
-  | { type: 'status'; status: 'thinking' | 'idle' | 'error'; error?: string }
-  | { type: 'error'; message: string }
-  | { type: 'raw_line'; line: string }
-  | { type: 'provider_event'; provider?: ProviderId; event: Record<string, unknown> };
+  | { type: 'delta'; text: string; providerSessionId?: string | null; providerDetail?: ProviderDetail }
+  | { type: 'final'; text: string; providerSessionId?: string | null; providerDetail?: ProviderDetail }
+  | { type: 'usage'; usage: Record<string, number>; providerSessionId?: string | null; providerDetail?: ProviderDetail }
+  | { type: 'status'; status: 'thinking' | 'idle' | 'error'; error?: string; providerSessionId?: string | null; providerDetail?: ProviderDetail }
+  | { type: 'error'; message: string; providerSessionId?: string | null; providerDetail?: ProviderDetail }
+  | { type: 'raw_line'; line: string; providerSessionId?: string | null; providerDetail?: ProviderDetail }
+  | { type: 'message'; provider?: ProviderId; role: 'system' | 'user' | 'assistant'; content: string; contentParts?: unknown; providerSessionId?: string | null; providerDetail?: ProviderDetail }
+  | { type: 'thinking'; provider?: ProviderId; phase: 'delta' | 'start' | 'completed' | 'error'; text?: string; timestampMs?: number; providerSessionId?: string | null; providerDetail?: ProviderDetail }
+  | { type: 'tool_call'; provider?: ProviderId; name?: string; callId?: string; input?: unknown; output?: unknown; phase?: 'delta' | 'start' | 'completed' | 'error'; providerSessionId?: string | null; providerDetail?: ProviderDetail }
+  | { type: 'detail'; provider?: ProviderId; providerSessionId?: string | null; providerDetail: ProviderDetail };
+
+export type ProviderDetail = {
+  eventType: string;
+  data?: Record<string, unknown>;
+  raw?: unknown;
+};
 
 export type ProviderLoginOptions = {
   baseUrl?: string;
@@ -399,12 +408,14 @@ export type SessionCreateOptions = {
   temperature?: number;
   maxTokens?: number;
   topP?: number;
+  providerDetailLevel?: 'minimal' | 'raw';
 };
 
 export type SessionSendOptions = {
   metadata?: Record<string, unknown>;
   cwd?: string;
   repoRoot?: string;
+  providerDetailLevel?: 'minimal' | 'raw';
 };
 
 export type SessionResumeOptions = {
@@ -413,6 +424,7 @@ export type SessionResumeOptions = {
   providerSessionId?: string | null;
   cwd?: string;
   repoRoot?: string;
+  providerDetailLevel?: 'minimal' | 'raw';
 };
 
 export interface AgentConnectSession {
@@ -551,7 +563,7 @@ Host (native host app or local dev):
 - Provide one-click install/login flows and fallback instructions.
 - Launch app backends with declared env and health checks.
 - Persist app consent for install-time permissions.
-- Emit session streaming events with delta/final/usage/status.
+- Emit session streaming events with delta/final/usage/status/message/thinking/tool_call/detail when available.
 - Expose a sandboxed webview with injected bridge support.
 
 SDK (client):

@@ -10,6 +10,7 @@ import type {
   InstallResult,
   ProviderLoginOptions,
   ModelInfo,
+  ProviderDetail,
 } from '../types.js';
 import {
   buildInstallCommand,
@@ -627,10 +628,26 @@ interface ClaudeMessage {
     session_id?: string;
     sessionId?: string;
     content?: Array<{ type?: string; text?: string }>;
+    role?: string;
   };
   event?: {
     type?: string;
-    delta?: { text?: string };
+    index?: number;
+    content_block?: {
+      type?: string;
+      id?: string;
+      name?: string;
+      input?: unknown;
+      text?: string;
+      thinking?: string;
+    };
+    delta?: {
+      type?: string;
+      text?: string;
+      partial_json?: string;
+      thinking?: string;
+      signature?: string;
+    };
   };
   delta?: { text?: string };
   result?: string;
@@ -662,6 +679,23 @@ function extractAssistantDelta(msg: ClaudeMessage): string | null {
   return typeof text === 'string' && text ? text : null;
 }
 
+function extractTextFromContent(content: unknown): string {
+  if (!content) return '';
+  if (typeof content === 'string') return content;
+  if (Array.isArray(content)) {
+    return content
+      .map((part) => {
+        if (!part || typeof part !== 'object') return '';
+        const text = (part as { type?: string; text?: unknown }).text;
+        if (typeof text === 'string') return text;
+        return '';
+      })
+      .filter(Boolean)
+      .join('');
+  }
+  return '';
+}
+
 function extractAssistantText(msg: ClaudeMessage): string | null {
   if (String(msg.type ?? '') !== 'assistant') return null;
   const content = msg.message?.content;
@@ -682,6 +716,7 @@ export function runClaudePrompt({
   resumeSessionId,
   model,
   cwd,
+  providerDetailLevel,
   onEvent,
   signal,
 }: RunPromptOptions): Promise<RunPromptResult> {
@@ -717,26 +752,43 @@ export function runClaudePrompt({
     let finalSessionId: string | null = null;
     let didFinalize = false;
     let sawError = false;
+    const toolBlocks = new Map<number, { id?: string; name?: string }>();
+    const thinkingBlocks = new Set<number>();
+
+    const includeRaw = providerDetailLevel === 'raw';
+    const buildProviderDetail = (
+      eventType: string,
+      data?: Record<string, unknown>,
+      raw?: unknown
+    ): ProviderDetail => {
+      const detail: ProviderDetail = { eventType };
+      if (data && Object.keys(data).length) detail.data = data;
+      if (includeRaw && raw !== undefined) detail.raw = raw;
+      return detail;
+    };
+    const emit = (event: Parameters<RunPromptOptions['onEvent']>[0]): void => {
+      if (finalSessionId) {
+        onEvent({ ...event, providerSessionId: finalSessionId });
+      } else {
+        onEvent(event);
+      }
+    };
 
     const emitError = (message: string): void => {
       if (sawError) return;
       sawError = true;
-      onEvent({ type: 'error', message });
+      emit({ type: 'error', message });
     };
 
-    const emitFinal = (text: string): void => {
-      if (finalSessionId) {
-        onEvent({ type: 'final', text, providerSessionId: finalSessionId });
-      } else {
-        onEvent({ type: 'final', text });
-      }
+    const emitFinal = (text: string, providerDetail?: ProviderDetail): void => {
+      emit({ type: 'final', text, providerDetail });
     };
 
     const handleLine = (line: string): void => {
       const parsed = safeJsonParse(line);
       if (!parsed || typeof parsed !== 'object') {
         if (line.trim()) {
-          onEvent({ type: 'raw_line', line });
+          emit({ type: 'raw_line', line });
         }
         return;
       }
@@ -745,24 +797,165 @@ export function runClaudePrompt({
       const sid = extractSessionId(msg);
       if (sid) finalSessionId = sid;
 
+      const msgType = String(msg.type ?? '');
+      let handled = false;
+
+      if (msgType === 'assistant' || msgType === 'user' || msgType === 'system') {
+        const role =
+          msg.message?.role === 'assistant' ||
+          msg.message?.role === 'user' ||
+          msg.message?.role === 'system'
+            ? msg.message.role
+            : msgType;
+        const rawContent = msg.message?.content;
+        const content = extractTextFromContent(rawContent);
+        emit({
+          type: 'message',
+          provider: 'claude',
+          role,
+          content,
+          contentParts: rawContent ?? null,
+          providerDetail: buildProviderDetail(msgType, {}, msg),
+        });
+        handled = true;
+      }
+
+      if (msgType === 'stream_event' && msg.event) {
+        const evType = String(msg.event.type ?? '');
+        const index = typeof msg.event.index === 'number' ? msg.event.index : undefined;
+        const block = msg.event.content_block;
+        if (evType === 'content_block_start' && block && typeof index === 'number') {
+          if (block.type === 'tool_use' || block.type === 'server_tool_use' || block.type === 'mcp_tool_use') {
+            toolBlocks.set(index, { id: block.id, name: block.name });
+            emit({
+              type: 'tool_call',
+              provider: 'claude',
+              name: block.name,
+              callId: block.id,
+              input: block.input,
+              phase: 'start',
+              providerDetail: buildProviderDetail(
+                'content_block_start',
+                { blockType: block.type, index, name: block.name, id: block.id },
+                msg
+              ),
+            });
+          }
+          if (block.type === 'thinking' || block.type === 'redacted_thinking') {
+            thinkingBlocks.add(index);
+            emit({
+              type: 'thinking',
+              provider: 'claude',
+              phase: 'start',
+              text: typeof block.thinking === 'string' ? block.thinking : undefined,
+              providerDetail: buildProviderDetail(
+                'content_block_start',
+                { blockType: block.type, index },
+                msg
+              ),
+            });
+          }
+          handled = true;
+        }
+        if (evType === 'content_block_delta') {
+          const delta = msg.event.delta ?? {};
+          if (delta.type === 'thinking_delta') {
+            emit({
+              type: 'thinking',
+              provider: 'claude',
+              phase: 'delta',
+              text: typeof delta.thinking === 'string' ? delta.thinking : undefined,
+              providerDetail: buildProviderDetail(
+                'content_block_delta',
+                { deltaType: delta.type, index },
+                msg
+              ),
+            });
+            handled = true;
+          }
+          if (delta.type === 'input_json_delta') {
+            const tool = typeof index === 'number' ? toolBlocks.get(index) : undefined;
+            emit({
+              type: 'tool_call',
+              provider: 'claude',
+              name: tool?.name,
+              callId: tool?.id,
+              input: delta.partial_json,
+              phase: 'delta',
+              providerDetail: buildProviderDetail(
+                'content_block_delta',
+                { deltaType: delta.type, index, name: tool?.name, id: tool?.id },
+                msg
+              ),
+            });
+            handled = true;
+          }
+        }
+        if (evType === 'content_block_stop' && typeof index === 'number') {
+          if (toolBlocks.has(index)) {
+            const tool = toolBlocks.get(index);
+            emit({
+              type: 'tool_call',
+              provider: 'claude',
+              name: tool?.name,
+              callId: tool?.id,
+              phase: 'completed',
+              providerDetail: buildProviderDetail(
+                'content_block_stop',
+                { index, name: tool?.name, id: tool?.id },
+                msg
+              ),
+            });
+            toolBlocks.delete(index);
+          }
+          if (thinkingBlocks.has(index)) {
+            emit({
+              type: 'thinking',
+              provider: 'claude',
+              phase: 'completed',
+              providerDetail: buildProviderDetail('content_block_stop', { index }, msg),
+            });
+            thinkingBlocks.delete(index);
+          }
+          handled = true;
+        }
+      }
+
       const delta = extractAssistantDelta(msg);
       if (delta) {
         aggregated += delta;
-        onEvent({ type: 'delta', text: delta });
+        emit({
+          type: 'delta',
+          text: delta,
+          providerDetail: buildProviderDetail(msgType || 'delta', {}, msg),
+        });
         return;
       }
 
       const assistant = extractAssistantText(msg);
       if (assistant && !aggregated) {
         aggregated = assistant;
-        onEvent({ type: 'delta', text: assistant });
+        emit({
+          type: 'delta',
+          text: assistant,
+          providerDetail: buildProviderDetail(msgType || 'assistant', {}, msg),
+        });
         return;
       }
 
       const result = extractResultText(msg);
       if (result && !didFinalize && !sawError) {
         didFinalize = true;
-        emitFinal(aggregated || result);
+        emitFinal(aggregated || result, buildProviderDetail('result', {}, msg));
+        handled = true;
+      }
+
+      if (!handled) {
+        emit({
+          type: 'detail',
+          provider: 'claude',
+          providerDetail: buildProviderDetail(msgType || 'unknown', {}, msg),
+        });
       }
     };
 

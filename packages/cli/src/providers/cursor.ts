@@ -7,6 +7,7 @@ import type {
   InstallResult,
   ModelInfo,
   ProviderLoginOptions,
+  ProviderDetail,
 } from '../types.js';
 import {
   buildInstallCommand,
@@ -341,6 +342,13 @@ function safeJsonParse(line: string): unknown {
 interface CursorEvent {
   type?: string;
   subtype?: string;
+  apiKeySource?: string;
+  cwd?: string;
+  model?: string;
+  permissionMode?: string;
+  timestamp_ms?: number;
+  call_id?: string;
+  tool_call?: Record<string, unknown>;
   session_id?: string;
   sessionId?: string;
   message?: { role?: string; content?: unknown };
@@ -421,6 +429,45 @@ function extractTextFromContent(content: unknown): string {
   return '';
 }
 
+type CursorToolCall = {
+  name?: string;
+  input?: unknown;
+  output?: unknown;
+  callId?: string;
+  phase?: 'start' | 'delta' | 'completed' | 'error';
+};
+
+function extractToolCall(ev: CursorEvent): CursorToolCall | null {
+  if (ev.type !== 'tool_call') return null;
+  const toolCall = ev.tool_call && typeof ev.tool_call === 'object' ? ev.tool_call : null;
+  if (!toolCall) return null;
+  const keys = Object.keys(toolCall);
+  if (!keys.length) return null;
+  const name = keys[0];
+  const entry = (toolCall as Record<string, unknown>)[name];
+  const record = entry && typeof entry === 'object' ? (entry as Record<string, unknown>) : null;
+  const input = record?.args ?? record?.input ?? undefined;
+  const output = record?.output ?? record?.result ?? undefined;
+  const subtype = typeof ev.subtype === 'string' ? ev.subtype : '';
+  const phase =
+    subtype === 'completed'
+      ? 'completed'
+      : subtype === 'started'
+        ? 'start'
+        : subtype === 'error'
+          ? 'error'
+          : subtype === 'delta'
+            ? 'delta'
+            : undefined;
+  return {
+    name,
+    input,
+    output,
+    callId: typeof ev.call_id === 'string' ? ev.call_id : undefined,
+    phase,
+  };
+}
+
 function extractTextFromMessage(message: unknown): string {
   if (!message || typeof message !== 'object') return '';
   const content = (message as { content?: unknown }).content;
@@ -494,6 +541,7 @@ export function runCursorPrompt({
   model,
   repoRoot,
   cwd,
+  providerDetailLevel,
   onEvent,
   signal,
 }: RunPromptOptions): Promise<RunPromptResult> {
@@ -502,12 +550,8 @@ export function runCursorPrompt({
     const resolvedRepoRoot = repoRoot ? path.resolve(repoRoot) : null;
     const resolvedCwd = cwd ? path.resolve(cwd) : null;
     const runDir = resolvedCwd || resolvedRepoRoot || process.cwd();
-    const cdTarget = resolvedRepoRoot || resolvedCwd || runDir;
     const args: string[] = ['--print', '--output-format', 'stream-json'];
 
-    if (cdTarget) {
-      args.push('--cwd', cdTarget);
-    }
     if (resumeSessionId) {
       args.push('--resume', resumeSessionId);
     }
@@ -527,7 +571,16 @@ export function runCursorPrompt({
     if (argsPreview.length > 0) {
       argsPreview[argsPreview.length - 1] = '[prompt]';
     }
-    debugLog('Cursor', 'spawn', { command, args: argsPreview, cwd: runDir });
+    debugLog('Cursor', 'spawn', {
+      command,
+      args: argsPreview,
+      cwd: runDir,
+      model: resolvedModel || null,
+      endpoint: endpoint || null,
+      resume: resumeSessionId || null,
+      apiKeyConfigured: Boolean(getCursorApiKey().trim()),
+      promptChars: prompt.length,
+    });
 
     const child = spawn(command, args, {
       cwd: runDir,
@@ -550,38 +603,140 @@ export function runCursorPrompt({
     const stdoutLines: string[] = [];
     const stderrLines: string[] = [];
 
+    const includeRaw = providerDetailLevel === 'raw';
+    const buildProviderDetail = (
+      eventType: string,
+      data?: Record<string, unknown>,
+      raw?: unknown
+    ): ProviderDetail => {
+      const detail: ProviderDetail = { eventType };
+      if (data && Object.keys(data).length) detail.data = data;
+      if (includeRaw && raw !== undefined) detail.raw = raw;
+      return detail;
+    };
+    const emit = (event: Parameters<RunPromptOptions['onEvent']>[0]): void => {
+      if (finalSessionId) {
+        onEvent({ ...event, providerSessionId: finalSessionId });
+      } else {
+        onEvent(event);
+      }
+    };
+
     const pushLine = (list: string[], line: string): void => {
       if (!line) return;
       list.push(line);
       if (list.length > 12) list.shift();
     };
 
-    const emitError = (message: string): void => {
+    const emitError = (message: string, providerDetail?: ProviderDetail): void => {
       if (sawError) return;
       sawError = true;
-      onEvent({ type: 'error', message });
+      emit({ type: 'error', message, providerDetail });
     };
 
     const emitFinal = (text: string): void => {
       if (didFinalize) return;
       didFinalize = true;
-      if (finalSessionId) {
-        onEvent({ type: 'final', text, providerSessionId: finalSessionId });
-      } else {
-        onEvent({ type: 'final', text });
-      }
+      emit({ type: 'final', text });
     };
 
     const handleEvent = (ev: CursorEvent): void => {
       const normalized = normalizeCursorEvent(ev);
-      onEvent({ type: 'provider_event', provider: 'cursor', event: normalized });
+      if (ev?.type === 'system' && ev?.subtype === 'init') {
+        debugLog('Cursor', 'init', {
+          apiKeySource: ev.apiKeySource || null,
+          cwd: ev.cwd || null,
+          model: ev.model || null,
+          permissionMode: ev.permissionMode || null,
+          sessionId: ev.session_id ?? ev.sessionId ?? null,
+        });
+        emit({
+          type: 'detail',
+          provider: 'cursor',
+          providerDetail: buildProviderDetail(
+            'system.init',
+            {
+              apiKeySource: ev.apiKeySource,
+              cwd: ev.cwd,
+              model: ev.model,
+              permissionMode: ev.permissionMode,
+            },
+            ev
+          ),
+        });
+      }
 
       const sid = extractSessionId(ev);
       if (sid) finalSessionId = sid;
 
+      if (ev?.type === 'thinking') {
+        const subtype = typeof ev.subtype === 'string' ? ev.subtype : '';
+        const phase =
+          subtype === 'completed'
+            ? 'completed'
+            : subtype === 'started'
+              ? 'start'
+              : subtype === 'error'
+                ? 'error'
+                : 'delta';
+        emit({
+          type: 'thinking',
+          provider: 'cursor',
+          phase,
+          text: typeof ev.text === 'string' ? ev.text : '',
+          timestampMs: typeof ev.timestamp_ms === 'number' ? ev.timestamp_ms : undefined,
+          providerDetail: buildProviderDetail(
+            subtype ? `thinking.${subtype}` : 'thinking',
+            {
+              subtype: subtype || undefined,
+            },
+            ev
+          ),
+        });
+      }
+
+      if (ev?.type === 'assistant' || ev?.type === 'user') {
+        const role =
+          ev.message?.role === 'assistant' || ev.message?.role === 'user'
+            ? ev.message?.role
+            : ev.type;
+        const rawContent = ev.message?.content ?? ev.content;
+        const content = extractTextFromContent(rawContent);
+        emit({
+          type: 'message',
+          provider: 'cursor',
+          role,
+          content,
+          contentParts: rawContent ?? null,
+          providerDetail: buildProviderDetail(ev.type, {}, ev),
+        });
+      }
+
+      const toolCall = extractToolCall(ev);
+      if (toolCall) {
+        emit({
+          type: 'tool_call',
+          provider: 'cursor',
+          name: toolCall.name,
+          callId: toolCall.callId,
+          input: toolCall.input,
+          output: toolCall.output,
+          phase: toolCall.phase,
+          providerDetail: buildProviderDetail(
+            ev.subtype ? `tool_call.${ev.subtype}` : 'tool_call',
+            {
+              name: toolCall.name,
+              callId: toolCall.callId,
+              subtype: ev.subtype,
+            },
+            ev
+          ),
+        });
+      }
+
       const usage = extractUsage(ev);
       if (usage) {
-        onEvent({
+        emit({
           type: 'usage',
           inputTokens: usage.input_tokens,
           outputTokens: usage.output_tokens,
@@ -590,14 +745,14 @@ export function runCursorPrompt({
 
       if (isErrorEvent(ev)) {
         const message = extractErrorMessage(ev) || 'Cursor run failed';
-        emitError(message);
+        emitError(message, buildProviderDetail(ev.subtype ? `error.${ev.subtype}` : 'error', {}, ev));
         return;
       }
 
       const delta = extractAssistantDelta(ev);
       if (delta) {
         aggregated += delta;
-        onEvent({ type: 'delta', text: delta });
+        emit({ type: 'delta', text: delta, providerDetail: buildProviderDetail('delta', {}, ev) });
       }
 
       if (ev.type === 'result') {
@@ -607,6 +762,29 @@ export function runCursorPrompt({
         }
         if (!sawError) {
           emitFinal(aggregated || resultText || '');
+          emit({
+            type: 'detail',
+            provider: 'cursor',
+            providerDetail: buildProviderDetail(
+              'result',
+              {
+                subtype: ev.subtype,
+                duration_ms:
+                  typeof (ev as { duration_ms?: unknown }).duration_ms === 'number'
+                    ? (ev as { duration_ms?: number }).duration_ms
+                    : undefined,
+                request_id:
+                  typeof (ev as { request_id?: unknown }).request_id === 'string'
+                    ? (ev as { request_id?: string }).request_id
+                    : undefined,
+                is_error:
+                  typeof (ev as { is_error?: unknown }).is_error === 'boolean'
+                    ? (ev as { is_error?: boolean }).is_error
+                    : undefined,
+              },
+              ev
+            ),
+          });
         }
       }
     };
@@ -617,7 +795,7 @@ export function runCursorPrompt({
       const payload = trimmed.startsWith('data: ') ? trimmed.slice(6).trim() : trimmed;
       const parsed = safeJsonParse(payload);
       if (!parsed || typeof parsed !== 'object') {
-        onEvent({ type: 'raw_line', line });
+        emit({ type: 'raw_line', line });
         if (source === 'stdout') {
           rawOutput += `${line}\n`;
           pushLine(stdoutLines, line);

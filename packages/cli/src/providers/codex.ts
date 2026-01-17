@@ -9,6 +9,7 @@ import type {
   RunPromptResult,
   ReasoningEffort,
   InstallResult,
+  ProviderDetail,
 } from '../types.js';
 import {
   buildInstallCommandAuto,
@@ -266,6 +267,10 @@ interface CodexItem {
   exit_code?: number;
   status?: string;
   text?: string;
+  name?: string;
+  input?: unknown;
+  output?: unknown;
+  [key: string]: unknown;
 }
 
 function extractSessionId(ev: CodexEvent): string | null {
@@ -565,6 +570,7 @@ export function runCodexPrompt({
   reasoningEffort,
   repoRoot,
   cwd,
+  providerDetailLevel,
   onEvent,
   signal,
 }: RunPromptOptions): Promise<RunPromptResult> {
@@ -609,10 +615,96 @@ export function runCodexPrompt({
         let didFinalize = false;
         let sawError = false;
 
-        const emitError = (message: string): void => {
+        const includeRaw = providerDetailLevel === 'raw';
+        const buildProviderDetail = (
+          eventType: string,
+          data?: Record<string, unknown>,
+          raw?: unknown
+        ): ProviderDetail => {
+          const detail: ProviderDetail = { eventType };
+          if (data && Object.keys(data).length) detail.data = data;
+          if (includeRaw && raw !== undefined) detail.raw = raw;
+          return detail;
+        };
+        const emit = (event: Parameters<RunPromptOptions['onEvent']>[0]): void => {
+          if (finalSessionId) {
+            onEvent({ ...event, providerSessionId: finalSessionId });
+          } else {
+            onEvent(event);
+          }
+        };
+
+        const emitError = (message: string, providerDetail?: ProviderDetail): void => {
           if (sawError) return;
           sawError = true;
-          onEvent({ type: 'error', message });
+          emit({ type: 'error', message, providerDetail });
+        };
+        const emitItemEvent = (item: CodexItem, phase: 'start' | 'completed'): void => {
+          const itemType = typeof item.type === 'string' ? item.type : '';
+          if (!itemType) return;
+          const providerDetail = buildProviderDetail(
+            phase === 'start' ? 'item.started' : 'item.completed',
+            {
+              itemType,
+              itemId: item.id,
+              status: item.status,
+            },
+            item
+          );
+          if (itemType === 'agent_message') {
+            if (phase === 'completed' && typeof item.text === 'string') {
+              emit({
+                type: 'message',
+                provider: 'codex',
+                role: 'assistant',
+                content: item.text,
+                contentParts: item,
+                providerDetail,
+              });
+            }
+            return;
+          }
+          if (itemType === 'reasoning') {
+            emit({
+              type: 'thinking',
+              provider: 'codex',
+              phase,
+              text: typeof item.text === 'string' ? item.text : undefined,
+              providerDetail,
+            });
+            return;
+          }
+          if (itemType === 'command_execution') {
+            const output =
+              phase === 'completed'
+                ? {
+                    output: item.aggregated_output,
+                    exitCode: item.exit_code,
+                    status: item.status,
+                  }
+                : undefined;
+            emit({
+              type: 'tool_call',
+              provider: 'codex',
+              name: 'command_execution',
+              callId: item.id,
+              input: { command: item.command },
+              output,
+              phase,
+              providerDetail,
+            });
+            return;
+          }
+          emit({
+            type: 'tool_call',
+            provider: 'codex',
+            name: itemType,
+            callId: item.id,
+            input: phase === 'start' ? item : undefined,
+            output: phase === 'completed' ? item : undefined,
+            phase,
+            providerDetail,
+          });
         };
         let sawJson = false;
         const stdoutLines: string[] = [];
@@ -623,19 +715,15 @@ export function runCodexPrompt({
           if (list.length > 12) list.shift();
         };
 
-        const emitFinal = (text: string): void => {
-          if (finalSessionId) {
-            onEvent({ type: 'final', text, providerSessionId: finalSessionId });
-          } else {
-            onEvent({ type: 'final', text });
-          }
+        const emitFinal = (text: string, providerDetail?: ProviderDetail): void => {
+          emit({ type: 'final', text, providerDetail });
         };
 
         const handleLine = (line: string, source: 'stdout' | 'stderr'): void => {
           const parsed = safeJsonParse(line);
           if (!parsed || typeof parsed !== 'object') {
             if (line.trim()) {
-              onEvent({ type: 'raw_line', line });
+              emit({ type: 'raw_line', line });
             }
             if (source === 'stdout') {
               pushLine(stdoutLines, line);
@@ -647,49 +735,90 @@ export function runCodexPrompt({
           sawJson = true;
           const ev = parsed as CodexEvent;
           const normalized = normalizeEvent(ev);
-          onEvent({ type: 'provider_event', provider: 'codex', event: normalized });
           const sid = extractSessionId(ev);
           if (sid) finalSessionId = sid;
 
+          const eventType = typeof ev.type === 'string' ? ev.type : normalized.type;
+          const detailData: Record<string, unknown> = {};
+          const threadId = ev.thread_id ?? ev.threadId;
+          if (typeof threadId === 'string' && threadId) detailData.threadId = threadId;
+          const providerDetail = buildProviderDetail(eventType || 'unknown', detailData, ev);
+          let handled = false;
+
           const usage = extractUsage(ev);
           if (usage) {
-            onEvent({
+            emit({
               type: 'usage',
               inputTokens: usage.input_tokens,
               outputTokens: usage.output_tokens,
+              providerDetail,
             });
+            handled = true;
           }
 
           if (normalized.type === 'agent_message') {
             const text = normalized.text;
             if (typeof text === 'string' && text) {
               aggregated += text;
-              onEvent({ type: 'delta', text });
+              emit({ type: 'delta', text, providerDetail });
+              emit({
+                type: 'message',
+                provider: 'codex',
+                role: 'assistant',
+                content: text,
+                contentParts: ev,
+                providerDetail,
+              });
+              handled = true;
             }
           } else if (normalized.type === 'item.completed') {
             const item = normalized.item;
             if (item && typeof item === 'object') {
+              const itemDetail = buildProviderDetail('item.completed', {
+                itemType: (item as CodexItem).type,
+                itemId: (item as CodexItem).id,
+                status: (item as CodexItem).status,
+              }, item);
               if (item.type === 'command_execution' && typeof item.aggregated_output === 'string') {
-                onEvent({ type: 'delta', text: item.aggregated_output });
+                emit({ type: 'delta', text: item.aggregated_output, providerDetail: itemDetail });
               }
               if (item.type === 'agent_message' && typeof item.text === 'string') {
                 aggregated += item.text;
-                onEvent({ type: 'delta', text: item.text });
+                emit({ type: 'delta', text: item.text, providerDetail: itemDetail });
               }
             }
+          }
+          if (normalized.type === 'item.started' && ev.item && typeof ev.item === 'object') {
+            emitItemEvent(ev.item as CodexItem, 'start');
+            handled = true;
+          }
+          if (normalized.type === 'item.completed' && ev.item && typeof ev.item === 'object') {
+            emitItemEvent(ev.item as CodexItem, 'completed');
+            handled = true;
+          }
+
+          if (normalized.type === 'error') {
+            emitError(normalized.message || 'Codex run failed', providerDetail);
+            handled = true;
           }
 
           if (isTerminalEvent(ev) && !didFinalize) {
             if (ev.type === 'turn.failed') {
               const message = ev.error?.message;
-              emitError(typeof message === 'string' ? message : 'Codex run failed');
+              emitError(typeof message === 'string' ? message : 'Codex run failed', providerDetail);
               didFinalize = true;
+              handled = true;
               return;
             }
             if (!sawError) {
               didFinalize = true;
-              emitFinal(aggregated);
+              emitFinal(aggregated, providerDetail);
+              handled = true;
             }
+          }
+
+          if (!handled) {
+            emit({ type: 'detail', provider: 'codex', providerDetail });
           }
         };
 
