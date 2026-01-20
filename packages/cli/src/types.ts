@@ -21,6 +21,7 @@ export type RpcErrorCode =
   | 'AC_ERR_NOT_INSTALLED'
   | 'AC_ERR_INVALID_ARGS'
   | 'AC_ERR_UNSUPPORTED'
+  | 'AC_ERR_BUSY'
   | 'AC_ERR_INTERNAL'
   | 'AC_ERR_FS_READ'
   | 'AC_ERR_FS_WRITE'
@@ -115,6 +116,13 @@ export interface ProviderStatus {
   installed: boolean;
   loggedIn: boolean;
   version?: string;
+  updateAvailable?: boolean;
+  latestVersion?: string;
+  updateCheckedAt?: number;
+  updateSource?: 'cli' | 'npm' | 'bun' | 'brew' | 'winget' | 'script' | 'unknown';
+  updateCommand?: string;
+  updateMessage?: string;
+  updateInProgress?: boolean;
 }
 
 export interface ProviderInfo extends ProviderStatus {
@@ -215,6 +223,7 @@ export interface Provider {
   name: string;
   ensureInstalled(): Promise<InstallResult>;
   status(): Promise<ProviderStatus>;
+  update(): Promise<ProviderStatus>;
   login(options?: ProviderLoginOptions): Promise<{ loggedIn: boolean }>;
   logout(): Promise<void>;
   listModels?(): Promise<ModelInfo[]>;

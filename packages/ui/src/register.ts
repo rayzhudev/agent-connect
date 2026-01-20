@@ -8,6 +8,23 @@ import {
   AgentConnectProviderStatus,
   AgentConnectConnect,
 } from './components';
+import { getClient } from './client';
+
+let prefetchStarted = false;
+
+async function prefetchProviderData(): Promise<void> {
+  if (prefetchStarted) return;
+  prefetchStarted = true;
+  try {
+    const client = await getClient();
+    const providers = await client.providers.list();
+    await Promise.allSettled(
+      providers.map((provider) => client.models.list(provider.id))
+    );
+  } catch {
+    // Ignore background prefetch errors
+  }
+}
 
 /**
  * Register all AgentConnect custom elements.
@@ -29,4 +46,7 @@ export function defineAgentConnectComponents(): void {
   if (!customElements.get('agentconnect-connect')) {
     customElements.define('agentconnect-connect', AgentConnectConnect);
   }
+  queueMicrotask(() => {
+    void prefetchProviderData();
+  });
 }

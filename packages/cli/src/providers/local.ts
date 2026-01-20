@@ -64,6 +64,10 @@ export async function getLocalStatus(): Promise<ProviderStatus> {
   return { installed: true, loggedIn: true };
 }
 
+export async function updateLocal(): Promise<ProviderStatus> {
+  return getLocalStatus();
+}
+
 export async function loginLocal(
   options: ProviderLoginOptions = {}
 ): Promise<{ loggedIn: boolean }> {

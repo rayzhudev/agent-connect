@@ -17,6 +17,7 @@ import type {
   InstallResult,
 } from './types.js';
 import { listModels, listRecentModels, providers, resolveProviderForModel } from './providers/index.js';
+import { debugLog } from './providers/utils.js';
 import { createObservedTracker } from './observed.js';
 
 interface RpcPayload {
@@ -75,6 +76,13 @@ function buildProviderList(statuses: Record<string, ProviderStatus>): ProviderIn
       installed: info.installed ?? false,
       loggedIn: info.loggedIn ?? false,
       version: info.version,
+      updateAvailable: info.updateAvailable,
+      latestVersion: info.latestVersion,
+      updateCheckedAt: info.updateCheckedAt,
+      updateSource: info.updateSource,
+      updateCommand: info.updateCommand,
+      updateMessage: info.updateMessage,
+      updateInProgress: info.updateInProgress,
     };
   });
 }
@@ -97,10 +105,12 @@ export function startDevHost({
   const wss = new WebSocketServer({ server });
   const sessions = new Map<string, SessionState>();
   const activeRuns = new Map<string, AbortController>();
+  const updatingProviders = new Map<ProviderId, Promise<ProviderStatus>>();
   const processTable = new Map<number, ChildProcess>();
   const backendState = new Map<string, BackendState>();
   const statusCache = new Map<string, { status: ProviderStatus; at: number }>();
-  const statusCacheTtlMs = 2000;
+  const statusCacheTtlMs = 8000;
+  const statusInFlight = new Map<ProviderId, Promise<ProviderStatus>>();
   const basePath = appPath || process.cwd();
   const manifest = readManifest(basePath);
   const appId = manifest?.id || 'agentconnect-dev-app';
@@ -182,9 +192,25 @@ export function startDevHost({
     if (cached && now - cached.at < statusCacheTtlMs) {
       return cached.status;
     }
-    const status = await provider.status();
-    statusCache.set(provider.id, { status, at: now });
-    return status;
+    const existing = statusInFlight.get(provider.id);
+    if (existing) return existing;
+    const startedAt = Date.now();
+    const promise = provider
+      .status()
+      .then((status) => {
+        debugLog('Providers', 'status-check', {
+          providerId: provider.id,
+          durationMs: Date.now() - startedAt,
+          completedAt: new Date().toISOString(),
+        });
+        statusCache.set(provider.id, { status, at: Date.now() });
+        return status;
+      })
+      .finally(() => {
+        statusInFlight.delete(provider.id);
+      });
+    statusInFlight.set(provider.id, promise);
+    return promise;
   }
 
   function invalidateStatus(providerId: ProviderId): void {
@@ -242,7 +268,11 @@ export function startDevHost({
           })
         );
         const statuses = Object.fromEntries(statusEntries);
-        reply(socket, id, { providers: buildProviderList(statuses) });
+        const list = buildProviderList(statuses).map((entry) => ({
+          ...entry,
+          updateInProgress: updatingProviders.has(entry.id),
+        }));
+        reply(socket, id, { providers: list });
         return;
       }
 
@@ -261,8 +291,66 @@ export function startDevHost({
             installed: status.installed,
             loggedIn: status.loggedIn,
             version: status.version,
+            updateAvailable: status.updateAvailable,
+            latestVersion: status.latestVersion,
+            updateCheckedAt: status.updateCheckedAt,
+            updateSource: status.updateSource,
+            updateCommand: status.updateCommand,
+            updateMessage: status.updateMessage,
+            updateInProgress: updatingProviders.has(provider.id) || status.updateInProgress,
           },
         });
+        return;
+      }
+
+      if (method === 'acp.providers.update') {
+        const providerId = params.provider as ProviderId;
+        const provider = providers[providerId];
+        if (!provider) {
+          replyError(socket, id, 'AC_ERR_UNSUPPORTED', 'Unknown provider');
+          return;
+        }
+        debugLog('Providers', 'update-start', { providerId });
+        if (!updatingProviders.has(providerId)) {
+          const promise = provider
+            .update()
+            .finally(() => {
+              updatingProviders.delete(providerId);
+              invalidateStatus(providerId);
+            });
+          updatingProviders.set(providerId, promise);
+        }
+        try {
+          const status = await updatingProviders.get(providerId)!;
+          debugLog('Providers', 'update-complete', {
+            providerId,
+            updateAvailable: status.updateAvailable,
+            latestVersion: status.latestVersion,
+            updateMessage: status.updateMessage,
+          });
+          reply(socket, id, {
+            provider: {
+              id: provider.id,
+              name: provider.name,
+              installed: status.installed,
+              loggedIn: status.loggedIn,
+              version: status.version,
+              updateAvailable: status.updateAvailable,
+              latestVersion: status.latestVersion,
+              updateCheckedAt: status.updateCheckedAt,
+              updateSource: status.updateSource,
+              updateCommand: status.updateCommand,
+              updateMessage: status.updateMessage,
+              updateInProgress: false,
+            },
+          });
+        } catch (err: unknown) {
+          debugLog('Providers', 'update-error', {
+            providerId,
+            message: err instanceof Error ? err.message : String(err),
+          });
+          replyError(socket, id, 'AC_ERR_INTERNAL', (err as Error)?.message || 'Update failed');
+        }
         return;
       }
 
@@ -427,6 +515,10 @@ export function startDevHost({
         const provider = providers[session.providerId];
         if (!provider) {
           replyError(socket, id, 'AC_ERR_UNSUPPORTED', 'Unknown provider');
+          return;
+        }
+        if (updatingProviders.has(session.providerId)) {
+          replyError(socket, id, 'AC_ERR_BUSY', 'Provider update in progress.');
           return;
         }
 

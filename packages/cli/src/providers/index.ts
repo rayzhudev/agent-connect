@@ -6,6 +6,7 @@ import {
   listClaudeRecentModels,
   loginClaude,
   runClaudePrompt,
+  updateClaude,
 } from './claude.js';
 import {
   ensureCodexInstalled,
@@ -13,6 +14,7 @@ import {
   listCodexModels,
   loginCodex,
   runCodexPrompt,
+  updateCodex,
 } from './codex.js';
 import {
   ensureCursorInstalled,
@@ -20,6 +22,7 @@ import {
   listCursorModels,
   loginCursor,
   runCursorPrompt,
+  updateCursor,
 } from './cursor.js';
 import {
   ensureLocalInstalled,
@@ -27,6 +30,7 @@ import {
   listLocalModels,
   loginLocal,
   runLocalPrompt,
+  updateLocal,
 } from './local.js';
 
 export const providers: Record<ProviderId, Provider> = {
@@ -35,6 +39,7 @@ export const providers: Record<ProviderId, Provider> = {
     name: 'Claude',
     ensureInstalled: ensureClaudeInstalled,
     status: getClaudeStatus,
+    update: updateClaude,
     login: loginClaude,
     logout: async () => {},
     runPrompt: runClaudePrompt,
@@ -44,6 +49,7 @@ export const providers: Record<ProviderId, Provider> = {
     name: 'Codex',
     ensureInstalled: ensureCodexInstalled,
     status: getCodexStatus,
+    update: updateCodex,
     login: loginCodex,
     logout: async () => {},
     runPrompt: runCodexPrompt,
@@ -53,6 +59,7 @@ export const providers: Record<ProviderId, Provider> = {
     name: 'Cursor',
     ensureInstalled: ensureCursorInstalled,
     status: getCursorStatus,
+    update: updateCursor,
     login: loginCursor,
     logout: async () => {},
     runPrompt: runCursorPrompt,
@@ -62,6 +69,7 @@ export const providers: Record<ProviderId, Provider> = {
     name: 'Local',
     ensureInstalled: ensureLocalInstalled,
     status: getLocalStatus,
+    update: updateLocal,
     login: loginLocal,
     logout: async () => {},
     runPrompt: runLocalPrompt,

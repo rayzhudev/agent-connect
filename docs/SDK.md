@@ -34,6 +34,13 @@ export type ProviderInfo = {
   installed: boolean;
   loggedIn: boolean;
   version?: string;
+  updateAvailable?: boolean;
+  latestVersion?: string;
+  updateCheckedAt?: number;
+  updateSource?: 'cli' | 'npm' | 'unknown';
+  updateCommand?: string;
+  updateMessage?: string;
+  updateInProgress?: boolean;
 };
 
 export type ReasoningEffortOption = {
@@ -137,6 +144,7 @@ export interface AgentConnectClient {
     list(): Promise<ProviderInfo[]>;
     status(provider: ProviderId): Promise<ProviderInfo>;
     ensureInstalled(provider: ProviderId): Promise<InstallResult>;
+    update(provider: ProviderId): Promise<ProviderInfo>;
     login(provider: ProviderId, options?: ProviderLoginOptions): Promise<{ loggedIn: boolean }>;
     logout(provider: ProviderId): Promise<{ loggedIn: boolean }>;
   };

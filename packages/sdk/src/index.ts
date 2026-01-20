@@ -14,6 +14,13 @@ export type ProviderInfo = {
   installed: boolean;
   loggedIn: boolean;
   version?: string;
+  updateAvailable?: boolean;
+  latestVersion?: string;
+  updateCheckedAt?: number;
+  updateSource?: 'cli' | 'npm' | 'bun' | 'brew' | 'winget' | 'script' | 'unknown';
+  updateCommand?: string;
+  updateMessage?: string;
+  updateInProgress?: boolean;
 };
 
 export type ReasoningEffortOption = {
@@ -175,6 +182,7 @@ export interface AgentConnectClient {
     list(): Promise<ProviderInfo[]>;
     status(provider: ProviderId): Promise<ProviderInfo>;
     ensureInstalled(provider: ProviderId): Promise<InstallResult>;
+    update(provider: ProviderId): Promise<ProviderInfo>;
     login(provider: ProviderId, options?: ProviderLoginOptions): Promise<{ loggedIn: boolean }>;
     logout(provider: ProviderId): Promise<{ loggedIn: boolean }>;
   };
@@ -719,6 +727,12 @@ class AgentConnectClientImpl implements AgentConnectClient {
     },
     status: async (provider: ProviderId): Promise<ProviderInfo> => {
       const res = (await this.request('acp.providers.status', { provider })) as {
+        provider: ProviderInfo;
+      };
+      return res.provider;
+    },
+    update: async (provider: ProviderId): Promise<ProviderInfo> => {
+      const res = (await this.request('acp.providers.update', { provider })) as {
         provider: ProviderInfo;
       };
       return res.provider;

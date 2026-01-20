@@ -19,6 +19,7 @@ import {
   debugLog,
   resolveWindowsCommand,
   resolveCommandPath,
+  resolveCommandRealPath,
   runCommand,
 } from './utils.js';
 
@@ -27,9 +28,94 @@ const DEFAULT_LOGIN = 'cursor-agent login';
 const DEFAULT_STATUS = 'cursor-agent status';
 const CURSOR_MODELS_COMMAND = 'cursor-agent models';
 const CURSOR_MODELS_CACHE_TTL_MS = 60_000;
+const CURSOR_UPDATE_COMMAND = 'cursor-agent update';
+const CURSOR_UPDATE_CACHE_TTL_MS = 6 * 60 * 60 * 1000;
 let cursorModelsCache: ModelInfo[] | null = null;
 let cursorModelsCacheAt = 0;
+let cursorUpdateCache: {
+  checkedAt: number;
+  updateAvailable?: boolean;
+  latestVersion?: string;
+  updateMessage?: string;
+} | null = null;
+let cursorUpdatePromise: Promise<void> | null = null;
 
+type CursorUpdateAction = {
+  command: string;
+  args: string[];
+  source: 'brew' | 'script';
+  commandLabel: string;
+};
+
+function trimOutput(value: string, limit = 400): string {
+  const cleaned = value.trim();
+  if (!cleaned) return '';
+  if (cleaned.length <= limit) return cleaned;
+  return `${cleaned.slice(0, limit)}...`;
+}
+
+function normalizePath(value: string): string {
+  const normalized = value.replace(/\\/g, '/');
+  return process.platform === 'win32' ? normalized.toLowerCase() : normalized;
+}
+
+function parseSemver(value: string | undefined): [number, number, number] | null {
+  if (!value) return null;
+  const match = value.match(/(\d+)\.(\d+)\.(\d+)/);
+  if (!match) return null;
+  return [Number(match[1]), Number(match[2]), Number(match[3])];
+}
+
+function compareSemver(a: [number, number, number], b: [number, number, number]): number {
+  if (a[0] !== b[0]) return a[0] - b[0];
+  if (a[1] !== b[1]) return a[1] - b[1];
+  return a[2] - b[2];
+}
+
+async function fetchBrewCaskVersion(cask: string): Promise<string | null> {
+  if (!commandExists('brew')) return null;
+  const result = await runCommand('brew', ['info', '--json=v2', '--cask', cask]);
+  if (result.code !== 0) return null;
+  try {
+    const parsed = JSON.parse(result.stdout) as { casks?: Array<{ version?: string }> };
+    const version = parsed?.casks?.[0]?.version;
+    return typeof version === 'string' ? version : null;
+  } catch {
+    return null;
+  }
+}
+
+function getCursorUpdateAction(commandPath: string | null): CursorUpdateAction | null {
+  if (!commandPath) return null;
+  const normalized = normalizePath(commandPath);
+
+  if (
+    normalized.includes('/cellar/') ||
+    normalized.includes('/caskroom/') ||
+    normalized.includes('/homebrew/')
+  ) {
+    return {
+      command: 'brew',
+      args: ['upgrade', '--cask', 'cursor'],
+      source: 'brew',
+      commandLabel: 'brew upgrade --cask cursor',
+    };
+  }
+
+  if (
+    normalized.includes('/.local/bin/') ||
+    normalized.includes('/.local/share/cursor-agent/versions/')
+  ) {
+    return {
+      command: 'bash',
+      args: ['-lc', INSTALL_UNIX],
+      source: 'script',
+      commandLabel: INSTALL_UNIX,
+    };
+  }
+
+  return null;
+}
 export function getCursorCommand(): string {
   const override = process.env.AGENTCONNECT_CURSOR_COMMAND;
   const base = override || 'cursor-agent';
@@ -215,6 +301,100 @@ function normalizeCursorStatusOutput(output: string): boolean | null {
   return null;
 }
 
+function parseUpdateOutput(output: string): {
+  updateAvailable?: boolean;
+  latestVersion?: string;
+  updateMessage?: string;
+} {
+  const text = output.toLowerCase();
+  const message = output.trim() || undefined;
+  if (
+    text.includes('already up to date') ||
+    text.includes('already up-to-date') ||
+    text.includes('up to date') ||
+    text.includes('up-to-date') ||
+    text.includes('no updates')
+  ) {
+    return { updateAvailable: false, updateMessage: message };
+  }
+  if (
+    text.includes('update available') ||
+    text.includes('new version') ||
+    text.includes('update found')
+  ) {
+    return { updateAvailable: true, updateMessage: message };
+  }
+  if (text.includes('updated') || text.includes('upgraded') || text.includes('installing')) {
+    return { updateAvailable: false, updateMessage: message };
+  }
+  return { updateAvailable: undefined, updateMessage: message };
+}
+
+function getCursorUpdateSnapshot(commandPath: string | null): {
+  updateAvailable?: boolean;
+  latestVersion?: string;
+  updateCheckedAt?: number;
+  updateSource?: 'cli' | 'npm' | 'bun' | 'brew' | 'winget' | 'script' | 'unknown';
+  updateCommand?: string;
+  updateMessage?: string;
+} {
+  if (cursorUpdateCache && Date.now() - cursorUpdateCache.checkedAt < CURSOR_UPDATE_CACHE_TTL_MS) {
+    const action = getCursorUpdateAction(commandPath);
+    return {
+      updateAvailable: cursorUpdateCache.updateAvailable,
+      latestVersion: cursorUpdateCache.latestVersion,
+      updateCheckedAt: cursorUpdateCache.checkedAt,
+      updateSource: action?.source ?? 'unknown',
+      updateCommand: action?.commandLabel,
+      updateMessage: cursorUpdateCache.updateMessage,
+    };
+  }
+  return {};
+}
+
+function ensureCursorUpdateCheck(currentVersion?: string, commandPath?: string | null): void {
+  if (cursorUpdateCache && Date.now() - cursorUpdateCache.checkedAt < CURSOR_UPDATE_CACHE_TTL_MS) {
+    return;
+  }
+  if (cursorUpdatePromise) return;
+  cursorUpdatePromise = (async () => {
+    const action = getCursorUpdateAction(commandPath || null);
+    let latest: string | null = null;
+    let updateAvailable: boolean | undefined;
+    let updateMessage: string | undefined;
+
+    if (action?.source === 'brew') {
+      latest = await fetchBrewCaskVersion('cursor');
+    }
+
+    if (latest && currentVersion) {
+      const a = parseSemver(currentVersion);
+      const b = parseSemver(latest);
+      if (a && b) {
+        updateAvailable = compareSemver(a, b) < 0;
+        updateMessage = updateAvailable
+          ? `Update available: ${currentVersion} -> ${latest}`
+          : `Up to date (${currentVersion})`;
+      }
+    } else if (!action) {
+      updateMessage = 'Update check unavailable';
+    }
+
+    debugLog('Cursor', 'update-check', {
+      updateAvailable,
+      message: updateMessage,
+    });
+    cursorUpdateCache = {
+      checkedAt: Date.now(),
+      updateAvailable,
+      latestVersion: latest ?? undefined,
+      updateMessage,
+    };
+  })().finally(() => {
+    cursorUpdatePromise = null;
+  });
+}
+
 export async function ensureCursorInstalled(): Promise<InstallResult> {
   const command = getCursorCommand();
   const versionCheck = await checkCommandVersion(command, [['--version'], ['-V']]);
@@ -258,12 +438,6 @@ export async function getCursorStatus(): Promise<ProviderStatus> {
   const command = getCursorCommand();
   const versionCheck = await checkCommandVersion(command, [['--version'], ['-V']]);
   const installed = versionCheck.ok || commandExists(command);
-  debugLog('Cursor', 'status-check', {
-    command,
-    versionOk: versionCheck.ok,
-    version: versionCheck.version,
-    installed,
-  });
   let loggedIn = false;
 
   if (installed) {
@@ -282,7 +456,45 @@ export async function getCursorStatus(): Promise<ProviderStatus> {
     }
   }
 
-  return { installed, loggedIn, version: versionCheck.version || undefined };
+  if (installed) {
+    const resolved = resolveCommandRealPath(command);
+    ensureCursorUpdateCheck(versionCheck.version, resolved || null);
+  }
+  const resolved = resolveCommandRealPath(command);
+  const updateInfo = installed ? getCursorUpdateSnapshot(resolved || null) : {};
+  return { installed, loggedIn, version: versionCheck.version || undefined, ...updateInfo };
+}
+
+export async function updateCursor(): Promise<ProviderStatus> {
+  const command = getCursorCommand();
+  if (!commandExists(command)) {
+    return { installed: false, loggedIn: false };
+  }
+  const resolved = resolveCommandRealPath(command);
+  const updateOverride = buildStatusCommand('AGENTCONNECT_CURSOR_UPDATE', '');
+  const action = updateOverride.command ? null : getCursorUpdateAction(resolved || null);
+  const updateCommand = updateOverride.command || action?.command || '';
+  const updateArgs = updateOverride.command ? updateOverride.args : action?.args || [];
+
+  if (!updateCommand) {
+    throw new Error('No update command available. Please update Cursor manually.');
+  }
+
+  const cmd = resolveWindowsCommand(updateCommand);
+  debugLog('Cursor', 'update-run', { command: cmd, args: updateArgs });
+  const result = await runCommand(cmd, updateArgs, { env: buildCursorEnv() });
+  debugLog('Cursor', 'update-result', {
+    code: result.code,
+    stdout: trimOutput(result.stdout),
+    stderr: trimOutput(result.stderr),
+  });
+  if (result.code !== 0 && result.code !== null) {
+    const message = trimOutput(`${result.stdout}\n${result.stderr}`, 800) || 'Update failed';
+    throw new Error(message);
+  }
+  cursorUpdateCache = null;
+  cursorUpdatePromise = null;
+  return getCursorStatus();
 }
 
 function buildCursorEnv(): NodeJS.ProcessEnv {

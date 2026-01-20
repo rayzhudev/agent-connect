@@ -101,6 +101,7 @@ Provider management:
 - `acp.providers.list`
 - `acp.providers.status`
 - `acp.providers.ensureInstalled`
+- `acp.providers.update`
 - `acp.providers.login`
 - `acp.providers.logout`
 
@@ -163,6 +164,7 @@ Standard JSON-RPC errors with structured `code` values:
 - `AC_ERR_NOT_INSTALLED`
 - `AC_ERR_INVALID_ARGS`
 - `AC_ERR_UNSUPPORTED`
+- `AC_ERR_BUSY`
 - `AC_ERR_INTERNAL`
 
 ### ACP Schemas (JSON Schema)
@@ -179,6 +181,7 @@ Method map (method -> params/result defs):
 - `acp.providers.list`: `ProvidersListParams` / `ProvidersListResult`
 - `acp.providers.status`: `ProviderStatusParams` / `ProviderStatusResult`
 - `acp.providers.ensureInstalled`: `ProviderEnsureParams` / `ProviderEnsureResult`
+- `acp.providers.update`: `ProviderUpdateParams` / `ProviderUpdateResult`
 - `acp.providers.login`: `ProviderLoginParams` / `ProviderLoginResult`
 - `acp.providers.logout`: `ProviderLoginParams` / `ProviderLoginResult`
 - `acp.models.list`: `ModelsListParams` / `ModelsListResult`
@@ -350,6 +353,13 @@ export type ProviderInfo = {
   installed: boolean;
   loggedIn: boolean;
   version?: string;
+  updateAvailable?: boolean;
+  latestVersion?: string;
+  updateCheckedAt?: number;
+  updateSource?: 'cli' | 'npm' | 'unknown';
+  updateCommand?: string;
+  updateMessage?: string;
+  updateInProgress?: boolean;
 };
 
 export type ReasoningEffortOption = {

@@ -1,5 +1,6 @@
 import { spawn } from 'child_process';
 import { readFile } from 'fs/promises';
+import https from 'https';
 import os from 'os';
 import path from 'path';
 import type {
@@ -10,6 +11,7 @@ import type {
   ReasoningEffort,
   InstallResult,
   ProviderDetail,
+  CommandResult,
 } from '../types.js';
 import {
   buildInstallCommandAuto,
@@ -21,6 +23,7 @@ import {
   debugLog,
   resolveWindowsCommand,
   resolveCommandPath,
+  resolveCommandRealPath,
   runCommand,
 } from './utils.js';
 
@@ -28,8 +31,23 @@ const CODEX_PACKAGE = '@openai/codex';
 const DEFAULT_LOGIN = 'codex login';
 const DEFAULT_STATUS = 'codex login status';
 const CODEX_MODELS_CACHE_TTL_MS = 60_000;
+const CODEX_UPDATE_CACHE_TTL_MS = 6 * 60 * 60 * 1000;
 let codexModelsCache: ModelInfo[] | null = null;
 let codexModelsCacheAt = 0;
+let codexUpdateCache: {
+  checkedAt: number;
+  updateAvailable?: boolean;
+  latestVersion?: string;
+  updateMessage?: string;
+} | null = null;
+let codexUpdatePromise: Promise<void> | null = null;
+
+type CodexUpdateAction = {
+  command: string;
+  args: string[];
+  source: 'npm' | 'bun' | 'brew';
+  commandLabel: string;
+};
 
 function trimOutput(value: string, limit = 400): string {
   const cleaned = value.trim();
@@ -38,8 +56,184 @@ function trimOutput(value: string, limit = 400): string {
   return `${cleaned.slice(0, limit)}...`;
 }
 
+function normalizePath(value: string): string {
+  const normalized = value.replace(/\\/g, '/');
+  return process.platform === 'win32' ? normalized.toLowerCase() : normalized;
+}
+
 function getCodexConfigDir(): string {
   return process.env.CODEX_CONFIG_DIR || path.join(os.homedir(), '.codex');
+}
+
+function fetchJson(url: string): Promise<unknown> {
+  return new Promise((resolve) => {
+    https
+      .get(url, (res) => {
+        let data = '';
+        res.on('data', (chunk) => {
+          data += chunk;
+        });
+        res.on('end', () => {
+          try {
+            resolve(JSON.parse(data));
+          } catch {
+            resolve(null);
+          }
+        });
+      })
+      .on('error', () => resolve(null));
+  });
+}
+
+function parseSemver(value: string | undefined): [number, number, number] | null {
+  if (!value) return null;
+  const match = value.match(/(\d+)\.(\d+)\.(\d+)/);
+  if (!match) return null;
+  return [Number(match[1]), Number(match[2]), Number(match[3])];
+}
+
+function compareSemver(a: [number, number, number], b: [number, number, number]): number {
+  if (a[0] !== b[0]) return a[0] - b[0];
+  if (a[1] !== b[1]) return a[1] - b[1];
+  return a[2] - b[2];
+}
+
+async function fetchLatestNpmVersion(pkg: string): Promise<string | null> {
+  const encoded = encodeURIComponent(pkg);
+  const data = (await fetchJson(`https://registry.npmjs.org/${encoded}`)) as
+    | { 'dist-tags'?: { latest?: string } }
+    | null;
+  if (!data || typeof data !== 'object') return null;
+  const latest = data['dist-tags']?.latest;
+  return typeof latest === 'string' ? latest : null;
+}
+
+async function fetchBrewFormulaVersion(formula: string): Promise<string | null> {
+  if (!commandExists('brew')) return null;
+  const result = await runCommand('brew', ['info', '--json=v2', formula]);
+  if (result.code !== 0) return null;
+  try {
+    const parsed = JSON.parse(result.stdout) as { formulae?: Array<{ versions?: { stable?: string } }> };
+    const version = parsed?.formulae?.[0]?.versions?.stable;
+    return typeof version === 'string' ? version : null;
+  } catch {
+    return null;
+  }
+}
+
+function getCodexUpdateAction(commandPath: string | null): CodexUpdateAction | null {
+  if (process.env.CODEX_MANAGED_BY_NPM) {
+    return {
+      command: 'npm',
+      args: ['install', '-g', CODEX_PACKAGE],
+      source: 'npm',
+      commandLabel: 'npm install -g @openai/codex',
+    };
+  }
+  if (process.env.CODEX_MANAGED_BY_BUN) {
+    return {
+      command: 'bun',
+      args: ['install', '-g', CODEX_PACKAGE],
+      source: 'bun',
+      commandLabel: 'bun install -g @openai/codex',
+    };
+  }
+  if (commandPath) {
+    const normalized = normalizePath(commandPath);
+    if (normalized.includes('.bun/install/global')) {
+      return {
+        command: 'bun',
+        args: ['install', '-g', CODEX_PACKAGE],
+        source: 'bun',
+        commandLabel: 'bun install -g @openai/codex',
+      };
+    }
+    if (normalized.includes('/node_modules/.bin/') || normalized.includes('/lib/node_modules/')) {
+      return {
+        command: 'npm',
+        args: ['install', '-g', CODEX_PACKAGE],
+        source: 'npm',
+        commandLabel: 'npm install -g @openai/codex',
+      };
+    }
+  }
+  if (
+    process.platform === 'darwin' &&
+    commandPath &&
+    (commandPath.startsWith('/opt/homebrew') || commandPath.startsWith('/usr/local'))
+  ) {
+    return {
+      command: 'brew',
+      args: ['upgrade', 'codex'],
+      source: 'brew',
+      commandLabel: 'brew upgrade codex',
+    };
+  }
+  return null;
+}
+
+function getCodexUpdateSnapshot(commandPath: string | null): {
+  updateAvailable?: boolean;
+  latestVersion?: string;
+  updateCheckedAt?: number;
+  updateSource?: 'npm' | 'bun' | 'brew' | 'unknown';
+  updateCommand?: string;
+  updateMessage?: string;
+} {
+  if (codexUpdateCache && Date.now() - codexUpdateCache.checkedAt < CODEX_UPDATE_CACHE_TTL_MS) {
+    const action = getCodexUpdateAction(commandPath);
+    return {
+      updateAvailable: codexUpdateCache.updateAvailable,
+      latestVersion: codexUpdateCache.latestVersion,
+      updateCheckedAt: codexUpdateCache.checkedAt,
+      updateSource: action?.source ?? 'unknown',
+      updateCommand: action?.commandLabel,
+      updateMessage: codexUpdateCache.updateMessage,
+    };
+  }
+  return {};
+}
+
+function ensureCodexUpdateCheck(currentVersion?: string, commandPath?: string | null): void {
+  if (codexUpdateCache && Date.now() - codexUpdateCache.checkedAt < CODEX_UPDATE_CACHE_TTL_MS) {
+    return;
+  }
+  if (codexUpdatePromise) return;
+  codexUpdatePromise = (async () => {
+    const action = getCodexUpdateAction(commandPath || null);
+    let latest: string | null = null;
+    if (action?.source === 'brew') {
+      latest = await fetchBrewFormulaVersion('codex');
+    } else {
+      latest = await fetchLatestNpmVersion(CODEX_PACKAGE);
+    }
+    let updateAvailable: boolean | undefined;
+    let updateMessage: string | undefined;
+    if (latest && currentVersion) {
+      const a = parseSemver(currentVersion);
+      const b = parseSemver(latest);
+      if (a && b) {
+        updateAvailable = compareSemver(a, b) < 0;
+        updateMessage = updateAvailable
+          ? `Update available: ${currentVersion} -> ${latest}`
+          : `Up to date (${currentVersion})`;
+      }
+    }
+    codexUpdateCache = {
+      checkedAt: Date.now(),
+      updateAvailable,
+      latestVersion: latest ?? undefined,
+      updateMessage,
+    };
+    debugLog('Codex', 'update-check', {
+      currentVersion,
+      latest,
+      updateAvailable,
+      message: updateMessage,
+    });
+  })().finally(() => {
+    codexUpdatePromise = null;
+  });
 }
 
 function hasAuthValue(value: unknown): boolean {
@@ -201,7 +395,46 @@ export async function getCodexStatus(): Promise<ProviderStatus> {
     }
   }
 
-  return { installed, loggedIn, version: versionCheck.version || undefined };
+  const resolved = resolveCommandRealPath(command);
+  if (installed) {
+    ensureCodexUpdateCheck(versionCheck.version, resolved || null);
+  }
+  const updateInfo = installed ? getCodexUpdateSnapshot(resolved || null) : {};
+  return { installed, loggedIn, version: versionCheck.version || undefined, ...updateInfo };
+}
+
+export async function updateCodex(): Promise<ProviderStatus> {
+  const command = getCodexCommand();
+  if (!commandExists(command)) {
+    return { installed: false, loggedIn: false };
+  }
+  const resolved = resolveCommandRealPath(command);
+  const updateOverride = buildStatusCommand('AGENTCONNECT_CODEX_UPDATE', '');
+  const action = updateOverride.command ? null : getCodexUpdateAction(resolved || null);
+  const updateCommand = updateOverride.command || action?.command || '';
+  const updateArgs = updateOverride.command ? updateOverride.args : action?.args || [];
+
+  if (!updateCommand) {
+    throw new Error('No update command available. Please update Codex manually.');
+  }
+
+  const cmd = resolveWindowsCommand(updateCommand);
+  debugLog('Codex', 'update-run', { command: cmd, args: updateArgs });
+  const result: CommandResult = await runCommand(cmd, updateArgs, {
+    env: { ...process.env, CI: '1' },
+  });
+  debugLog('Codex', 'update-result', {
+    code: result.code,
+    stdout: trimOutput(result.stdout),
+    stderr: trimOutput(result.stderr),
+  });
+  if (result.code !== 0 && result.code !== null) {
+    const message = trimOutput(`${result.stdout}\n${result.stderr}`, 800) || 'Update failed';
+    throw new Error(message);
+  }
+  codexUpdateCache = null;
+  codexUpdatePromise = null;
+  return getCodexStatus();
 }
 
 export async function loginCodex(): Promise<{ loggedIn: boolean }> {
