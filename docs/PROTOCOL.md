@@ -3,7 +3,7 @@
 ## Summary
 
 AgentConnect is a host-agnostic SDK and protocol that lets apps use local AI agent CLIs
-(Claude Code, Codex CLI) and local models through a single interface. Apps run unchanged
+(Claude Code, Codex CLI, Cursor CLI) and local models through a single interface. Apps run unchanged
 in two environments:
 
 - Local development with a standalone AgentConnect host.
@@ -14,7 +14,7 @@ bundle their own backend service, but the host always launches and manages it.
 
 ## Goals
 
-- Provide a unified interface for Claude Code, Codex CLI, and local models.
+- Provide a unified interface for Claude Code, Codex CLI, Cursor CLI, and local models.
 - Allow apps to run locally and in a native host app with no code changes.
 - Support host-managed app backends for full local capabilities.
 - Offer one-click provider install and login, with a simple fallback path.
@@ -43,7 +43,7 @@ bundle their own backend service, but the host always launches and manages it.
 - App Backend (optional): Local service launched by the host.
 - AgentConnect Client SDK: JS library used by apps.
 - AgentConnect Host: native host app or standalone local dev host.
-- Provider Adapters: Claude CLI, Codex CLI, local model connectors.
+- Provider Adapters: Claude CLI, Codex CLI, Cursor CLI, local model connectors.
 - Public Registry: Signed manifests and package metadata.
 
 ### Architecture (simplified)
@@ -54,7 +54,7 @@ App UI (web) <-> AgentConnect SDK <-> Host (native host app or Dev Host)
                                        |  - backend manager
                                        |  - permissions metadata
                                        |  - registry trust
-                                       +-> Claude CLI / Codex CLI / Local model
+                                       +-> Claude CLI / Codex CLI / Cursor CLI / Local model
 ```
 
 ## Runtime Model
@@ -90,7 +90,7 @@ ACP uses JSON-RPC 2.0 over WebSocket or direct in-process bridge.
   "protocolVersion": "0.1",
   "mode": "hosted" | "local",
   "capabilities": ["fs.read", "process.spawn", "..."],
-  "providers": ["claude", "codex", "local"]
+  "providers": ["claude", "codex", "cursor", "local"]
 }
 ```
 
@@ -101,6 +101,7 @@ Provider management:
 - `acp.providers.list`
 - `acp.providers.status`
 - `acp.providers.ensureInstalled`
+- `acp.providers.update`
 - `acp.providers.login`
 - `acp.providers.logout`
 
@@ -149,7 +150,7 @@ Events are pushed to the client over the same WebSocket:
   "method": "acp.session.event",
   "params": {
     "sessionId": "sess_123",
-    "type": "delta" | "final" | "usage" | "status" | "error" | "raw_line" | "provider_event",
+    "type": "delta" | "final" | "usage" | "status" | "error" | "raw_line" | "message" | "thinking" | "tool_call" | "detail",
     "data": { ... }
   }
 }
@@ -163,6 +164,7 @@ Standard JSON-RPC errors with structured `code` values:
 - `AC_ERR_NOT_INSTALLED`
 - `AC_ERR_INVALID_ARGS`
 - `AC_ERR_UNSUPPORTED`
+- `AC_ERR_BUSY`
 - `AC_ERR_INTERNAL`
 
 ### ACP Schemas (JSON Schema)
@@ -179,6 +181,7 @@ Method map (method -> params/result defs):
 - `acp.providers.list`: `ProvidersListParams` / `ProvidersListResult`
 - `acp.providers.status`: `ProviderStatusParams` / `ProviderStatusResult`
 - `acp.providers.ensureInstalled`: `ProviderEnsureParams` / `ProviderEnsureResult`
+- `acp.providers.update`: `ProviderUpdateParams` / `ProviderUpdateResult`
 - `acp.providers.login`: `ProviderLoginParams` / `ProviderLoginResult`
 - `acp.providers.logout`: `ProviderLoginParams` / `ProviderLoginResult`
 - `acp.models.list`: `ModelsListParams` / `ModelsListResult`
@@ -218,7 +221,7 @@ first run and stores the consent decision. There are no runtime popups.
 ### Common Capability Names
 
 - `agent.connect`
-- `model.claude`, `model.codex`, `model.local`
+- `model.claude`, `model.codex`, `model.cursor`, `model.local`
 - `fs.read`, `fs.write`, `fs.watch`
 - `process.spawn`, `process.kill`
 - `network.request`
@@ -258,7 +261,7 @@ Example:
     "process.spawn",
     "backend.run"
   ],
-  "providers": ["claude", "codex", "local"],
+  "providers": ["claude", "codex", "cursor", "local"],
   "models": { "default": "claude-sonnet" },
   "icon": "icon.png",
   "repo": "https://github.com/example/agentic-notes",
@@ -342,7 +345,7 @@ session.on("delta", (text) => render(text));
 ### SDK API (TypeScript)
 
 ```ts
-export type ProviderId = 'claude' | 'codex' | 'local';
+export type ProviderId = 'claude' | 'codex' | 'cursor' | 'local';
 
 export type ProviderInfo = {
   id: ProviderId;
@@ -350,6 +353,13 @@ export type ProviderInfo = {
   installed: boolean;
   loggedIn: boolean;
   version?: string;
+  updateAvailable?: boolean;
+  latestVersion?: string;
+  updateCheckedAt?: number;
+  updateSource?: 'cli' | 'npm' | 'unknown';
+  updateCommand?: string;
+  updateMessage?: string;
+  updateInProgress?: boolean;
 };
 
 export type ReasoningEffortOption = {
@@ -368,13 +378,22 @@ export type ModelInfo = {
 };
 
 export type SessionEvent =
-  | { type: 'delta'; text: string }
-  | { type: 'final'; text: string; providerSessionId?: string | null }
-  | { type: 'usage'; usage: Record<string, number> }
-  | { type: 'status'; status: 'thinking' | 'idle' | 'error'; error?: string }
-  | { type: 'error'; message: string }
-  | { type: 'raw_line'; line: string }
-  | { type: 'provider_event'; provider?: ProviderId; event: Record<string, unknown> };
+  | { type: 'delta'; text: string; providerSessionId?: string | null; providerDetail?: ProviderDetail }
+  | { type: 'final'; text: string; providerSessionId?: string | null; providerDetail?: ProviderDetail }
+  | { type: 'usage'; usage: Record<string, number>; providerSessionId?: string | null; providerDetail?: ProviderDetail }
+  | { type: 'status'; status: 'thinking' | 'idle' | 'error'; error?: string; providerSessionId?: string | null; providerDetail?: ProviderDetail }
+  | { type: 'error'; message: string; providerSessionId?: string | null; providerDetail?: ProviderDetail }
+  | { type: 'raw_line'; line: string; providerSessionId?: string | null; providerDetail?: ProviderDetail }
+  | { type: 'message'; provider?: ProviderId; role: 'system' | 'user' | 'assistant'; content: string; contentParts?: unknown; providerSessionId?: string | null; providerDetail?: ProviderDetail }
+  | { type: 'thinking'; provider?: ProviderId; phase: 'delta' | 'start' | 'completed' | 'error'; text?: string; timestampMs?: number; providerSessionId?: string | null; providerDetail?: ProviderDetail }
+  | { type: 'tool_call'; provider?: ProviderId; name?: string; callId?: string; input?: unknown; output?: unknown; phase?: 'delta' | 'start' | 'completed' | 'error'; providerSessionId?: string | null; providerDetail?: ProviderDetail }
+  | { type: 'detail'; provider?: ProviderId; providerSessionId?: string | null; providerDetail: ProviderDetail };
+
+export type ProviderDetail = {
+  eventType: string;
+  data?: Record<string, unknown>;
+  raw?: unknown;
+};
 
 export type ProviderLoginOptions = {
   baseUrl?: string;
@@ -399,12 +418,14 @@ export type SessionCreateOptions = {
   temperature?: number;
   maxTokens?: number;
   topP?: number;
+  providerDetailLevel?: 'minimal' | 'raw';
 };
 
 export type SessionSendOptions = {
   metadata?: Record<string, unknown>;
   cwd?: string;
   repoRoot?: string;
+  providerDetailLevel?: 'minimal' | 'raw';
 };
 
 export type SessionResumeOptions = {
@@ -413,6 +434,7 @@ export type SessionResumeOptions = {
   providerSessionId?: string | null;
   cwd?: string;
   repoRoot?: string;
+  providerDetailLevel?: 'minimal' | 'raw';
 };
 
 export interface AgentConnectSession {
@@ -547,11 +569,11 @@ Host apps can show curated verified apps, while allowing direct installs by name
 Host (native host app or local dev):
 
 - Implement ACP server with JSON-RPC 2.0 envelope validation.
-- Implement provider adapters for Claude CLI, Codex CLI, and local model backends.
+- Implement provider adapters for Claude CLI, Codex CLI, Cursor CLI, and local model backends.
 - Provide one-click install/login flows and fallback instructions.
 - Launch app backends with declared env and health checks.
 - Persist app consent for install-time permissions.
-- Emit session streaming events with delta/final/usage/status.
+- Emit session streaming events with delta/final/usage/status/message/thinking/tool_call/detail when available.
 - Expose a sandboxed webview with injected bridge support.
 
 SDK (client):

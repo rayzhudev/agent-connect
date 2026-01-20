@@ -1,5 +1,6 @@
 import { spawn } from 'child_process';
 import { access, mkdir, readFile, rm, writeFile } from 'fs/promises';
+import https from 'https';
 import os from 'os';
 import path from 'path';
 import type { IPty } from 'node-pty';
@@ -10,6 +11,7 @@ import type {
   InstallResult,
   ProviderLoginOptions,
   ModelInfo,
+  ProviderDetail,
 } from '../types.js';
 import {
   buildInstallCommand,
@@ -19,8 +21,10 @@ import {
   checkCommandVersion,
   commandExists,
   createLineParser,
+  debugLog,
   resolveWindowsCommand,
   resolveCommandPath,
+  resolveCommandRealPath,
   runCommand,
 } from './utils.js';
 
@@ -33,10 +37,153 @@ const DEFAULT_LOGIN = '';
 const DEFAULT_STATUS = '';
 const CLAUDE_MODELS_CACHE_TTL_MS = 60_000;
 const CLAUDE_RECENT_MODELS_CACHE_TTL_MS = 60_000;
+const CLAUDE_UPDATE_CACHE_TTL_MS = 6 * 60 * 60 * 1000;
 let claudeModelsCache: ModelInfo[] | null = null;
 let claudeModelsCacheAt = 0;
 let claudeRecentModelsCache: ModelInfo[] | null = null;
 let claudeRecentModelsCacheAt = 0;
+let claudeUpdateCache: {
+  checkedAt: number;
+  updateAvailable?: boolean;
+  latestVersion?: string;
+  updateMessage?: string;
+} | null = null;
+let claudeUpdatePromise: Promise<void> | null = null;
+const CLAUDE_LOGIN_CACHE_TTL_MS = 30_000;
+type ClaudeLoginHint = 'setup' | 'login';
+type ClaudeCliLoginStatus = {
+  loggedIn: boolean | null;
+  loginHint?: ClaudeLoginHint;
+  apiKeySource?: string;
+  authError?: string;
+};
+let claudeLoginCache: { checkedAt: number; status: ClaudeCliLoginStatus } | null = null;
+let claudeLoginPromise: Promise<ClaudeCliLoginStatus> | null = null;
+
+type ClaudeUpdateAction = {
+  command: string;
+  args: string[];
+  source: 'npm' | 'bun' | 'brew' | 'winget' | 'script';
+  commandLabel: string;
+};
+
+function trimOutput(value: string, limit = 400): string {
+  const cleaned = value.trim();
+  if (!cleaned) return '';
+  if (cleaned.length <= limit) return cleaned;
+  return `${cleaned.slice(0, limit)}...`;
+}
+
+function normalizePath(value: string): string {
+  const normalized = value.replace(/\\/g, '/');
+  return process.platform === 'win32' ? normalized.toLowerCase() : normalized;
+}
+
+function parseSemver(value: string | undefined): [number, number, number] | null {
+  if (!value) return null;
+  const match = value.match(/(\d+)\.(\d+)\.(\d+)/);
+  if (!match) return null;
+  return [Number(match[1]), Number(match[2]), Number(match[3])];
+}
+
+function compareSemver(a: [number, number, number], b: [number, number, number]): number {
+  if (a[0] !== b[0]) return a[0] - b[0];
+  if (a[1] !== b[1]) return a[1] - b[1];
+  return a[2] - b[2];
+}
+
+async function fetchLatestNpmVersion(pkg: string): Promise<string | null> {
+  const encoded = encodeURIComponent(pkg);
+  const data = await fetchJson(`https://registry.npmjs.org/${encoded}`);
+  if (!data || typeof data !== 'object') return null;
+  const latest = (data as { 'dist-tags'?: { latest?: string } })['dist-tags']?.latest;
+  return typeof latest === 'string' ? latest : null;
+}
+
+async function fetchBrewCaskVersion(cask: string): Promise<string | null> {
+  if (!commandExists('brew')) return null;
+  const result = await runCommand('brew', ['info', '--json=v2', '--cask', cask]);
+  if (result.code !== 0) return null;
+  try {
+    const parsed = JSON.parse(result.stdout) as { casks?: Array<{ version?: string }> };
+    const version = parsed?.casks?.[0]?.version;
+    return typeof version === 'string' ? version : null;
+  } catch {
+    return null;
+  }
+}
+
+function getClaudeUpdateAction(commandPath: string | null): ClaudeUpdateAction | null {
+  if (!commandPath) return null;
+  const normalized = normalizePath(commandPath);
+  const home = normalizePath(os.homedir());
+
+  if (normalized.startsWith(`${home}/.bun/bin/`)) {
+    return {
+      command: 'bun',
+      args: ['install', '-g', CLAUDE_PACKAGE],
+      source: 'bun',
+      commandLabel: 'bun install -g @anthropic-ai/claude-code',
+    };
+  }
+  if (normalized.includes('/node_modules/.bin/')) {
+    return {
+      command: 'npm',
+      args: ['install', '-g', CLAUDE_PACKAGE],
+      source: 'npm',
+      commandLabel: 'npm install -g @anthropic-ai/claude-code',
+    };
+  }
+
+  if (
+    normalized.includes('/cellar/') ||
+    normalized.includes('/caskroom/') ||
+    normalized.includes('/homebrew/')
+  ) {
+    return {
+      command: 'brew',
+      args: ['upgrade', '--cask', 'claude-code'],
+      source: 'brew',
+      commandLabel: 'brew upgrade --cask claude-code',
+    };
+  }
+
+  if (
+    process.platform === 'win32' &&
+    (normalized.includes('/program files/claudecode') ||
+      normalized.includes('/programdata/claudecode'))
+  ) {
+    return {
+      command: 'winget',
+      args: ['upgrade', 'Anthropic.ClaudeCode'],
+      source: 'winget',
+      commandLabel: 'winget upgrade Anthropic.ClaudeCode',
+    };
+  }
+
+  if (
+    normalized.includes('/.local/bin/') ||
+    normalized.includes('/.local/share/claude/versions/') ||
+    normalized.includes('/.local/share/claude-code/versions/')
+  ) {
+    if (process.platform === 'win32') {
+      return {
+        command: 'powershell',
+        args: ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', INSTALL_WINDOWS_PS],
+        source: 'script',
+        commandLabel: INSTALL_WINDOWS_PS,
+      };
+    }
+    return {
+      command: 'bash',
+      args: ['-lc', INSTALL_UNIX],
+      source: 'script',
+      commandLabel: INSTALL_UNIX,
+    };
+  }
+
+  return null;
+}
 
 const DEFAULT_CLAUDE_MODELS = [
   {
@@ -66,6 +213,26 @@ export function getClaudeCommand(): string {
 
 function getClaudeConfigDir(): string {
   return process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude');
+}
+
+function fetchJson(url: string): Promise<unknown> {
+  return new Promise((resolve) => {
+    https
+      .get(url, (res) => {
+        let data = '';
+        res.on('data', (chunk) => {
+          data += chunk;
+        });
+        res.on('end', () => {
+          try {
+            resolve(JSON.parse(data));
+          } catch {
+            resolve(null);
+          }
+        });
+      })
+      .on('error', () => resolve(null));
+  });
 }
 
 function formatClaudeDisplayName(modelId: string): string {
@@ -190,6 +357,20 @@ function resolveClaudeLoginExperience(
   }
   if (process.env.AGENTCONNECT_HOST_MODE === 'dev') return 'terminal';
   return 'embedded';
+}
+
+async function resolveClaudeLoginHint(options?: ProviderLoginOptions): Promise<ClaudeLoginHint> {
+  const raw = process.env.AGENTCONNECT_CLAUDE_LOGIN_HINT;
+  if (raw) {
+    const normalized = String(raw).trim().toLowerCase();
+    if (normalized === 'setup') return 'setup';
+    if (normalized === 'login') return 'login';
+  }
+  if (options?.loginExperience) {
+    // no-op; keep for future overrides
+  }
+  const status = await checkClaudeCliStatus();
+  return status.loginHint ?? 'login';
 }
 
 async function createClaudeLoginSettingsFile(
@@ -385,38 +566,200 @@ async function hasClaudeAuth(): Promise<boolean> {
   return false;
 }
 
-async function checkClaudeCliStatus(): Promise<boolean | null> {
-  const command = resolveWindowsCommand(getClaudeCommand());
-  const result = await runCommand(command, ['--print'], {
-    env: { ...process.env, CI: '1' },
-    input: '/status\n',
-    timeoutMs: 4000,
+function isClaudeAuthErrorText(value: string): boolean {
+  const text = value.toLowerCase();
+  return (
+    text.includes('authentication_error') ||
+    text.includes('authentication_failed') ||
+    text.includes('oauth token has expired') ||
+    text.includes('token has expired') ||
+    text.includes('please run /login') ||
+    text.includes('unauthorized') ||
+    text.includes('api error: 401') ||
+    text.includes('status 401') ||
+    text.includes('invalid api key')
+  );
+}
+
+function extractClaudeMessageText(content: unknown): string {
+  if (Array.isArray(content)) {
+    return content.map((part) => (part as { text?: string })?.text ?? '').join(' ');
+  }
+  return typeof content === 'string' ? content : '';
+}
+
+function resolveClaudeLoginHintFromSource(apiKeySource?: string): ClaudeLoginHint {
+  if (apiKeySource && apiKeySource.toLowerCase() === 'none') return 'setup';
+  return 'login';
+}
+
+async function checkClaudeCliStatus(): Promise<ClaudeCliLoginStatus> {
+  if (claudeLoginCache && Date.now() - claudeLoginCache.checkedAt < CLAUDE_LOGIN_CACHE_TTL_MS) {
+    return claudeLoginCache.status;
+  }
+  if (claudeLoginPromise) return claudeLoginPromise;
+
+  claudeLoginPromise = (async (): Promise<ClaudeCliLoginStatus> => {
+    const command = resolveWindowsCommand(getClaudeCommand());
+    const args = [
+      '--print',
+      '--output-format',
+      'stream-json',
+      '--no-session-persistence',
+      '--max-budget-usd',
+      '0.01',
+    ];
+    const result = await runCommand(command, args, {
+      env: { ...process.env, CI: '1' },
+      input: 'ping\n',
+      timeoutMs: 8000,
+    });
+    const output = `${result.stdout}\n${result.stderr}`.trim();
+    if (!output) return { loggedIn: null };
+
+    let apiKeySource: string | undefined;
+    let authError: string | null = null;
+    let sawAssistant = false;
+    let sawSuccess = false;
+    const lines = output.split('\n');
+    for (const line of lines) {
+      const parsed = safeJsonParse(line);
+      if (!parsed || typeof parsed !== 'object') continue;
+      const record = parsed as Record<string, unknown>;
+      const type = typeof record.type === 'string' ? record.type : '';
+      if (type === 'system' && record.subtype === 'init') {
+        const source =
+          typeof record.apiKeySource === 'string' ? record.apiKeySource : undefined;
+        if (source) apiKeySource = source;
+      }
+      if (type === 'result') {
+        const isError = Boolean(record.is_error);
+        const resultText =
+          typeof record.result === 'string'
+            ? record.result
+            : typeof record.error === 'string'
+              ? record.error
+              : JSON.stringify(record.error || record);
+        if (isError && isClaudeAuthErrorText(resultText)) {
+          authError = authError ?? resultText;
+        }
+        if (!isError) sawSuccess = true;
+      }
+      if (type === 'message') {
+        const message = record.message as Record<string, unknown> | undefined;
+        const role = typeof message?.role === 'string' ? message.role : '';
+        if (role === 'assistant') {
+          const text = extractClaudeMessageText(message?.content);
+          const errorText =
+            typeof record.error === 'string'
+              ? record.error
+              : typeof message?.error === 'string'
+                ? message.error
+                : '';
+          if (
+            isClaudeAuthErrorText(text) ||
+            (errorText && isClaudeAuthErrorText(errorText))
+          ) {
+            authError = authError ?? (text || errorText);
+          } else if (text.trim()) {
+            sawAssistant = true;
+          }
+        }
+      }
+    }
+
+    if (authError) {
+      return {
+        loggedIn: false,
+        apiKeySource,
+        loginHint: resolveClaudeLoginHintFromSource(apiKeySource),
+        authError,
+      };
+    }
+    if (sawAssistant || sawSuccess) {
+      return { loggedIn: true, apiKeySource };
+    }
+    if (apiKeySource && apiKeySource.toLowerCase() === 'none') {
+      return { loggedIn: false, apiKeySource, loginHint: 'setup' as ClaudeLoginHint };
+    }
+    return { loggedIn: null, apiKeySource };
+  })()
+    .then((status) => {
+      claudeLoginCache = { checkedAt: Date.now(), status };
+      return status;
+    })
+    .finally(() => {
+      claudeLoginPromise = null;
+    });
+
+  return claudeLoginPromise!;
+}
+
+function getClaudeUpdateSnapshot(commandPath: string | null): {
+  updateAvailable?: boolean;
+  latestVersion?: string;
+  updateCheckedAt?: number;
+  updateSource?: 'cli' | 'npm' | 'bun' | 'brew' | 'winget' | 'script' | 'unknown';
+  updateCommand?: string;
+  updateMessage?: string;
+} {
+  if (claudeUpdateCache && Date.now() - claudeUpdateCache.checkedAt < CLAUDE_UPDATE_CACHE_TTL_MS) {
+    const action = getClaudeUpdateAction(commandPath);
+    return {
+      updateAvailable: claudeUpdateCache.updateAvailable,
+      latestVersion: claudeUpdateCache.latestVersion,
+      updateCheckedAt: claudeUpdateCache.checkedAt,
+      updateSource: action?.source ?? 'unknown',
+      updateCommand: action?.commandLabel,
+      updateMessage: claudeUpdateCache.updateMessage,
+    };
+  }
+  return {};
+}
+
+function ensureClaudeUpdateCheck(currentVersion?: string, commandPath?: string | null): void {
+  if (claudeUpdateCache && Date.now() - claudeUpdateCache.checkedAt < CLAUDE_UPDATE_CACHE_TTL_MS) {
+    return;
+  }
+  if (claudeUpdatePromise) return;
+  claudeUpdatePromise = (async () => {
+    const action = getClaudeUpdateAction(commandPath || null);
+    let latest: string | null = null;
+    let updateAvailable: boolean | undefined;
+    let updateMessage: string | undefined;
+
+    if (action?.source === 'npm' || action?.source === 'bun') {
+      latest = await fetchLatestNpmVersion(CLAUDE_PACKAGE);
+    } else if (action?.source === 'brew') {
+      latest = await fetchBrewCaskVersion('claude-code');
+    }
+
+    if (latest && currentVersion) {
+      const a = parseSemver(currentVersion);
+      const b = parseSemver(latest);
+      if (a && b) {
+        updateAvailable = compareSemver(a, b) < 0;
+        updateMessage = updateAvailable
+          ? `Update available: ${currentVersion} -> ${latest}`
+          : `Up to date (${currentVersion})`;
+      }
+    } else if (!action) {
+      updateMessage = 'Update check unavailable';
+    }
+
+    debugLog('Claude', 'update-check', {
+      updateAvailable,
+      message: updateMessage,
+    });
+    claudeUpdateCache = {
+      checkedAt: Date.now(),
+      updateAvailable,
+      latestVersion: latest ?? undefined,
+      updateMessage,
+    };
+  })().finally(() => {
+    claudeUpdatePromise = null;
   });
-  const output = `${result.stdout}\n${result.stderr}`.toLowerCase();
-  if (!output.trim()) {
-    return null;
-  }
-  if (
-    output.includes('not logged in') ||
-    output.includes('not authenticated') ||
-    output.includes('please log in') ||
-    output.includes('please login') ||
-    output.includes('run /login') ||
-    output.includes('sign in') ||
-    output.includes('invalid api key')
-  ) {
-    return false;
-  }
-  if (
-    output.includes('logged in') ||
-    output.includes('authenticated') ||
-    output.includes('signed in') ||
-    output.includes('account') ||
-    output.includes('@')
-  ) {
-    return true;
-  }
-  return null;
 }
 
 export async function ensureClaudeInstalled(): Promise<InstallResult> {
@@ -487,19 +830,65 @@ export async function getClaudeStatus(): Promise<ProviderStatus> {
       const result = await runCommand(statusCommand, status.args);
       loggedIn = result.code === 0;
     } else {
-      const hasAuth = await hasClaudeAuth();
       const cliStatus = await checkClaudeCliStatus();
-      if (cliStatus === false) {
+      if (cliStatus.loggedIn === false) {
         loggedIn = false;
-      } else if (cliStatus === true) {
+      } else if (cliStatus.loggedIn === true) {
         loggedIn = true;
+      } else if (cliStatus.apiKeySource?.toLowerCase() === 'none') {
+        loggedIn = false;
       } else {
-        loggedIn = hasAuth;
+        loggedIn = await hasClaudeAuth();
       }
     }
   }
 
-  return { installed, loggedIn, version: versionCheck.version || undefined };
+  if (installed) {
+    const resolved = resolveCommandRealPath(command);
+    ensureClaudeUpdateCheck(versionCheck.version, resolved || null);
+  }
+  const resolved = resolveCommandRealPath(command);
+  const updateInfo = installed ? getClaudeUpdateSnapshot(resolved || null) : {};
+  return { installed, loggedIn, version: versionCheck.version || undefined, ...updateInfo };
+}
+
+export async function getClaudeFastStatus(): Promise<ProviderStatus> {
+  const command = getClaudeCommand();
+  const installed = commandExists(command);
+  const loggedIn = installed ? await hasClaudeAuth() : false;
+  return { installed, loggedIn };
+}
+
+export async function updateClaude(): Promise<ProviderStatus> {
+  const command = getClaudeCommand();
+  if (!commandExists(command)) {
+    return { installed: false, loggedIn: false };
+  }
+  const resolved = resolveCommandRealPath(command);
+  const updateOverride = buildStatusCommand('AGENTCONNECT_CLAUDE_UPDATE', '');
+  const action = updateOverride.command ? null : getClaudeUpdateAction(resolved || null);
+  const updateCommand = updateOverride.command || action?.command || '';
+  const updateArgs = updateOverride.command ? updateOverride.args : action?.args || [];
+
+  if (!updateCommand) {
+    throw new Error('No update command available. Please update Claude manually.');
+  }
+
+  const cmd = resolveWindowsCommand(updateCommand);
+  debugLog('Claude', 'update-run', { command: cmd, args: updateArgs });
+  const result = await runCommand(cmd, updateArgs, { env: { ...process.env, CI: '1' } });
+  debugLog('Claude', 'update-result', {
+    code: result.code,
+    stdout: trimOutput(result.stdout),
+    stderr: trimOutput(result.stderr),
+  });
+  if (result.code !== 0 && result.code !== null) {
+    const message = trimOutput(`${result.stdout}\n${result.stderr}`, 800) || 'Update failed';
+    throw new Error(message);
+  }
+  claudeUpdateCache = null;
+  claudeUpdatePromise = null;
+  return getClaudeStatus();
 }
 
 export async function loginClaude(
@@ -520,10 +909,12 @@ async function runClaudeLoginFlow(options?: ProviderLoginOptions): Promise<void>
   const command = resolveWindowsCommand(getClaudeCommand());
   const loginMethod = resolveClaudeLoginMethod(options);
   const loginExperience = resolveClaudeLoginExperience(options);
+  const loginHint = await resolveClaudeLoginHint(options);
   await ensureClaudeOnboardingSettings();
   const settingsPath = await createClaudeLoginSettingsFile(loginMethod);
   const loginTimeoutMs = Number(process.env.AGENTCONNECT_CLAUDE_LOGIN_TIMEOUT_MS || 180_000);
   const loginArgs = settingsPath ? ['--settings', settingsPath] : [];
+  const includeLogin = loginHint === 'login';
   let ptyProcess: IPty | null = null;
   let childExited = false;
 
@@ -535,7 +926,7 @@ async function runClaudeLoginFlow(options?: ProviderLoginOptions): Promise<void>
         // ignore
       }
     }
-    if (settingsPath) {
+    if (settingsPath && loginExperience !== 'terminal') {
       try {
         await rm(settingsPath, { force: true });
       } catch {
@@ -546,7 +937,12 @@ async function runClaudeLoginFlow(options?: ProviderLoginOptions): Promise<void>
 
   try {
     if (loginExperience === 'terminal') {
-      await openClaudeLoginTerminal(command, loginArgs, false);
+      await openClaudeLoginTerminal(command, loginArgs, includeLogin);
+      if (settingsPath) {
+        setTimeout(() => {
+          rm(settingsPath, { force: true }).catch(() => {});
+        }, loginTimeoutMs);
+      }
     } else {
       const ptyModule = await loadPtyModule();
       if (!ptyModule) {
@@ -555,7 +951,8 @@ async function runClaudeLoginFlow(options?: ProviderLoginOptions): Promise<void>
         );
       }
 
-      ptyProcess = ptyModule.spawn(command, [...loginArgs, '/login'], {
+      const spawnArgs = includeLogin ? [...loginArgs, '/login'] : loginArgs;
+      ptyProcess = ptyModule.spawn(command, spawnArgs, {
         name: 'xterm-256color',
         cols: 100,
         rows: 30,
@@ -627,10 +1024,26 @@ interface ClaudeMessage {
     session_id?: string;
     sessionId?: string;
     content?: Array<{ type?: string; text?: string }>;
+    role?: string;
   };
   event?: {
     type?: string;
-    delta?: { text?: string };
+    index?: number;
+    content_block?: {
+      type?: string;
+      id?: string;
+      name?: string;
+      input?: unknown;
+      text?: string;
+      thinking?: string;
+    };
+    delta?: {
+      type?: string;
+      text?: string;
+      partial_json?: string;
+      thinking?: string;
+      signature?: string;
+    };
   };
   delta?: { text?: string };
   result?: string;
@@ -662,6 +1075,23 @@ function extractAssistantDelta(msg: ClaudeMessage): string | null {
   return typeof text === 'string' && text ? text : null;
 }
 
+function extractTextFromContent(content: unknown): string {
+  if (!content) return '';
+  if (typeof content === 'string') return content;
+  if (Array.isArray(content)) {
+    return content
+      .map((part) => {
+        if (!part || typeof part !== 'object') return '';
+        const text = (part as { type?: string; text?: unknown }).text;
+        if (typeof text === 'string') return text;
+        return '';
+      })
+      .filter(Boolean)
+      .join('');
+  }
+  return '';
+}
+
 function extractAssistantText(msg: ClaudeMessage): string | null {
   if (String(msg.type ?? '') !== 'assistant') return null;
   const content = msg.message?.content;
@@ -682,6 +1112,7 @@ export function runClaudePrompt({
   resumeSessionId,
   model,
   cwd,
+  providerDetailLevel,
   onEvent,
   signal,
 }: RunPromptOptions): Promise<RunPromptResult> {
@@ -717,26 +1148,43 @@ export function runClaudePrompt({
     let finalSessionId: string | null = null;
     let didFinalize = false;
     let sawError = false;
+    const toolBlocks = new Map<number, { id?: string; name?: string }>();
+    const thinkingBlocks = new Set<number>();
+
+    const includeRaw = providerDetailLevel === 'raw';
+    const buildProviderDetail = (
+      eventType: string,
+      data?: Record<string, unknown>,
+      raw?: unknown
+    ): ProviderDetail => {
+      const detail: ProviderDetail = { eventType };
+      if (data && Object.keys(data).length) detail.data = data;
+      if (includeRaw && raw !== undefined) detail.raw = raw;
+      return detail;
+    };
+    const emit = (event: Parameters<RunPromptOptions['onEvent']>[0]): void => {
+      if (finalSessionId) {
+        onEvent({ ...event, providerSessionId: finalSessionId });
+      } else {
+        onEvent(event);
+      }
+    };
 
     const emitError = (message: string): void => {
       if (sawError) return;
       sawError = true;
-      onEvent({ type: 'error', message });
+      emit({ type: 'error', message });
     };
 
-    const emitFinal = (text: string): void => {
-      if (finalSessionId) {
-        onEvent({ type: 'final', text, providerSessionId: finalSessionId });
-      } else {
-        onEvent({ type: 'final', text });
-      }
+    const emitFinal = (text: string, providerDetail?: ProviderDetail): void => {
+      emit({ type: 'final', text, providerDetail });
     };
 
     const handleLine = (line: string): void => {
       const parsed = safeJsonParse(line);
       if (!parsed || typeof parsed !== 'object') {
         if (line.trim()) {
-          onEvent({ type: 'raw_line', line });
+          emit({ type: 'raw_line', line });
         }
         return;
       }
@@ -745,24 +1193,165 @@ export function runClaudePrompt({
       const sid = extractSessionId(msg);
       if (sid) finalSessionId = sid;
 
+      const msgType = String(msg.type ?? '');
+      let handled = false;
+
+      if (msgType === 'assistant' || msgType === 'user' || msgType === 'system') {
+        const role =
+          msg.message?.role === 'assistant' ||
+          msg.message?.role === 'user' ||
+          msg.message?.role === 'system'
+            ? msg.message.role
+            : msgType;
+        const rawContent = msg.message?.content;
+        const content = extractTextFromContent(rawContent);
+        emit({
+          type: 'message',
+          provider: 'claude',
+          role,
+          content,
+          contentParts: rawContent ?? null,
+          providerDetail: buildProviderDetail(msgType, {}, msg),
+        });
+        handled = true;
+      }
+
+      if (msgType === 'stream_event' && msg.event) {
+        const evType = String(msg.event.type ?? '');
+        const index = typeof msg.event.index === 'number' ? msg.event.index : undefined;
+        const block = msg.event.content_block;
+        if (evType === 'content_block_start' && block && typeof index === 'number') {
+          if (block.type === 'tool_use' || block.type === 'server_tool_use' || block.type === 'mcp_tool_use') {
+            toolBlocks.set(index, { id: block.id, name: block.name });
+            emit({
+              type: 'tool_call',
+              provider: 'claude',
+              name: block.name,
+              callId: block.id,
+              input: block.input,
+              phase: 'start',
+              providerDetail: buildProviderDetail(
+                'content_block_start',
+                { blockType: block.type, index, name: block.name, id: block.id },
+                msg
+              ),
+            });
+          }
+          if (block.type === 'thinking' || block.type === 'redacted_thinking') {
+            thinkingBlocks.add(index);
+            emit({
+              type: 'thinking',
+              provider: 'claude',
+              phase: 'start',
+              text: typeof block.thinking === 'string' ? block.thinking : undefined,
+              providerDetail: buildProviderDetail(
+                'content_block_start',
+                { blockType: block.type, index },
+                msg
+              ),
+            });
+          }
+          handled = true;
+        }
+        if (evType === 'content_block_delta') {
+          const delta = msg.event.delta ?? {};
+          if (delta.type === 'thinking_delta') {
+            emit({
+              type: 'thinking',
+              provider: 'claude',
+              phase: 'delta',
+              text: typeof delta.thinking === 'string' ? delta.thinking : undefined,
+              providerDetail: buildProviderDetail(
+                'content_block_delta',
+                { deltaType: delta.type, index },
+                msg
+              ),
+            });
+            handled = true;
+          }
+          if (delta.type === 'input_json_delta') {
+            const tool = typeof index === 'number' ? toolBlocks.get(index) : undefined;
+            emit({
+              type: 'tool_call',
+              provider: 'claude',
+              name: tool?.name,
+              callId: tool?.id,
+              input: delta.partial_json,
+              phase: 'delta',
+              providerDetail: buildProviderDetail(
+                'content_block_delta',
+                { deltaType: delta.type, index, name: tool?.name, id: tool?.id },
+                msg
+              ),
+            });
+            handled = true;
+          }
+        }
+        if (evType === 'content_block_stop' && typeof index === 'number') {
+          if (toolBlocks.has(index)) {
+            const tool = toolBlocks.get(index);
+            emit({
+              type: 'tool_call',
+              provider: 'claude',
+              name: tool?.name,
+              callId: tool?.id,
+              phase: 'completed',
+              providerDetail: buildProviderDetail(
+                'content_block_stop',
+                { index, name: tool?.name, id: tool?.id },
+                msg
+              ),
+            });
+            toolBlocks.delete(index);
+          }
+          if (thinkingBlocks.has(index)) {
+            emit({
+              type: 'thinking',
+              provider: 'claude',
+              phase: 'completed',
+              providerDetail: buildProviderDetail('content_block_stop', { index }, msg),
+            });
+            thinkingBlocks.delete(index);
+          }
+          handled = true;
+        }
+      }
+
       const delta = extractAssistantDelta(msg);
       if (delta) {
         aggregated += delta;
-        onEvent({ type: 'delta', text: delta });
+        emit({
+          type: 'delta',
+          text: delta,
+          providerDetail: buildProviderDetail(msgType || 'delta', {}, msg),
+        });
         return;
       }
 
       const assistant = extractAssistantText(msg);
       if (assistant && !aggregated) {
         aggregated = assistant;
-        onEvent({ type: 'delta', text: assistant });
+        emit({
+          type: 'delta',
+          text: assistant,
+          providerDetail: buildProviderDetail(msgType || 'assistant', {}, msg),
+        });
         return;
       }
 
       const result = extractResultText(msg);
       if (result && !didFinalize && !sawError) {
         didFinalize = true;
-        emitFinal(aggregated || result);
+        emitFinal(aggregated || result, buildProviderDetail('result', {}, msg));
+        handled = true;
+      }
+
+      if (!handled) {
+        emit({
+          type: 'detail',
+          provider: 'claude',
+          providerDetail: buildProviderDetail(msgType || 'unknown', {}, msg),
+        });
       }
     };
 

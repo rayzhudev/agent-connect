@@ -18,7 +18,7 @@ const client = await AgentConnect.connect({
 ## Types
 
 ```ts
-export type ProviderId = 'claude' | 'codex' | 'local';
+export type ProviderId = 'claude' | 'codex' | 'cursor' | 'local';
 
 export type PackageManager = 'bun' | 'pnpm' | 'npm' | 'brew' | 'unknown';
 
@@ -34,6 +34,13 @@ export type ProviderInfo = {
   installed: boolean;
   loggedIn: boolean;
   version?: string;
+  updateAvailable?: boolean;
+  latestVersion?: string;
+  updateCheckedAt?: number;
+  updateSource?: 'cli' | 'npm' | 'unknown';
+  updateCommand?: string;
+  updateMessage?: string;
+  updateInProgress?: boolean;
 };
 
 export type ReasoningEffortOption = {
@@ -61,13 +68,22 @@ export type ProviderLoginOptions = {
 };
 
 export type SessionEvent =
-  | { type: 'delta'; text: string }
-  | { type: 'final'; text: string; providerSessionId?: string | null }
-  | { type: 'usage'; usage: Record<string, number> }
-  | { type: 'status'; status: 'thinking' | 'idle' | 'error'; error?: string }
-  | { type: 'error'; message: string }
-  | { type: 'raw_line'; line: string }
-  | { type: 'provider_event'; provider?: ProviderId; event: Record<string, unknown> };
+  | { type: 'delta'; text: string; providerSessionId?: string | null; providerDetail?: ProviderDetail }
+  | { type: 'final'; text: string; providerSessionId?: string | null; providerDetail?: ProviderDetail }
+  | { type: 'usage'; usage: Record<string, number>; providerSessionId?: string | null; providerDetail?: ProviderDetail }
+  | { type: 'status'; status: 'thinking' | 'idle' | 'error'; error?: string; providerSessionId?: string | null; providerDetail?: ProviderDetail }
+  | { type: 'error'; message: string; providerSessionId?: string | null; providerDetail?: ProviderDetail }
+  | { type: 'raw_line'; line: string; providerSessionId?: string | null; providerDetail?: ProviderDetail }
+  | { type: 'message'; provider?: ProviderId; role: 'system' | 'user' | 'assistant'; content: string; contentParts?: unknown; providerSessionId?: string | null; providerDetail?: ProviderDetail }
+  | { type: 'thinking'; provider?: ProviderId; phase: 'delta' | 'start' | 'completed' | 'error'; text?: string; timestampMs?: number; providerSessionId?: string | null; providerDetail?: ProviderDetail }
+  | { type: 'tool_call'; provider?: ProviderId; name?: string; callId?: string; input?: unknown; output?: unknown; phase?: 'delta' | 'start' | 'completed' | 'error'; providerSessionId?: string | null; providerDetail?: ProviderDetail }
+  | { type: 'detail'; provider?: ProviderId; providerSessionId?: string | null; providerDetail: ProviderDetail };
+
+export type ProviderDetail = {
+  eventType: string;
+  data?: Record<string, unknown>;
+  raw?: unknown;
+};
 
 export type SessionCreateOptions = {
   model: string;
@@ -79,12 +95,14 @@ export type SessionCreateOptions = {
   temperature?: number;
   maxTokens?: number;
   topP?: number;
+  providerDetailLevel?: 'minimal' | 'raw';
 };
 
 export type SessionSendOptions = {
   metadata?: Record<string, unknown>;
   cwd?: string;
   repoRoot?: string;
+  providerDetailLevel?: 'minimal' | 'raw';
 };
 
 export type SessionResumeOptions = {
@@ -93,6 +111,7 @@ export type SessionResumeOptions = {
   providerSessionId?: string | null;
   cwd?: string;
   repoRoot?: string;
+  providerDetailLevel?: 'minimal' | 'raw';
 };
 ```
 
@@ -125,6 +144,7 @@ export interface AgentConnectClient {
     list(): Promise<ProviderInfo[]>;
     status(provider: ProviderId): Promise<ProviderInfo>;
     ensureInstalled(provider: ProviderId): Promise<InstallResult>;
+    update(provider: ProviderId): Promise<ProviderInfo>;
     login(provider: ProviderId, options?: ProviderLoginOptions): Promise<{ loggedIn: boolean }>;
     logout(provider: ProviderId): Promise<{ loggedIn: boolean }>;
   };
@@ -220,16 +240,16 @@ await client.sessions.resume('sess_123', {
 });
 ```
 
-### Provider events
+### Provider detail
 
 ```ts
 session.on('raw_line', (event) => {
   console.log('[cli]', event.line);
 });
 
-session.on('provider_event', (event) => {
+session.on('detail', (event) => {
   if (event.provider === 'codex') {
-    console.log(event.event);
+    console.log(event.providerDetail);
   }
 });
 ```

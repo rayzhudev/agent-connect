@@ -5,7 +5,7 @@
 [![npm](https://img.shields.io/npm/v/@agentconnect/ui)](https://www.npmjs.com/package/@agentconnect/ui)
 [![npm](https://img.shields.io/npm/v/@agentconnect/cli)](https://www.npmjs.com/package/@agentconnect/cli)
 
-AgentConnect allows any local app to connect to a user's coding agent CLIs e.g. Claude Code, ChatGPT Codex. This allows users to bring along their existing AI subscription rather than having to subscribe separately for AI usage for each app.
+AgentConnect allows any local app to connect to a user's coding agent CLIs e.g. Claude Code, ChatGPT Codex, Cursor CLI. This allows users to bring along their existing AI subscription rather than having to subscribe separately for AI usage for each app.
 
 AgentConnect features a Connect Agent modal that installs and logs into different AI providers, and allows users to select their choice of provider and model.
 
@@ -21,6 +21,7 @@ It's perfect to plug and play into any locally running app.
 Currently supported coding agent providers:
 - Claude Code
 - ChatGPT Codex
+- Cursor CLI
 - Local model (in alpha)
 
 ## How it works

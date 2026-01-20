@@ -44,6 +44,46 @@ export const buttonStyles = `
       inset 0 1px 0 rgba(255, 255, 255, 1),
       0 4px 12px rgba(0, 0, 0, 0.06);
   }
+  .ac-button.update {
+    background: transparent;
+    color: #2b2f3a;
+    border: 1px solid rgba(120, 129, 145, 0.45);
+    --ac-button-color: #2b2f3a;
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.9),
+      0 6px 16px rgba(18, 24, 38, 0.12);
+  }
+  .ac-button.update:hover:not([disabled]) {
+    border-color: rgba(90, 100, 120, 0.7);
+    background: transparent;
+    box-shadow:
+      0 0 0 1px rgba(80, 90, 110, 0.2),
+      inset 0 1px 0 rgba(255, 255, 255, 1),
+      0 10px 20px rgba(18, 24, 38, 0.16);
+  }
+  .ac-button.update.icon {
+    width: 40px;
+    height: 40px;
+    padding: 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    position: relative;
+    transition: transform 0.15s ease, box-shadow 0.2s ease, border-color 0.2s ease;
+  }
+  .ac-button.update.icon svg {
+    width: 18px;
+    height: 18px;
+    fill: currentColor;
+    filter: none;
+  }
+  .ac-button.update.icon:hover:not([disabled]) {
+    border-color: rgba(90, 100, 120, 0.7);
+    box-shadow:
+      0 0 0 1px rgba(80, 90, 110, 0.2),
+      inset 0 1px 0 rgba(255, 255, 255, 1),
+      0 10px 20px rgba(18, 24, 38, 0.16);
+  }
   .ac-button.ghost {
     background: transparent;
     color: rgba(80, 70, 50, 0.7);
@@ -171,6 +211,9 @@ export const connectButtonStyles = `
   }
   .ac-connect .ac-connect-icon[data-provider="claude"] svg {
     fill: #d97757;
+  }
+  .ac-connect .ac-connect-icon[data-provider="cursor"] svg {
+    fill: #26251e;
   }
   .ac-connect .ac-button:hover:not([disabled]) {
     transform: translateY(-2px);

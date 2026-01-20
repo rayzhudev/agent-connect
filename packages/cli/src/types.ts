@@ -21,6 +21,7 @@ export type RpcErrorCode =
   | 'AC_ERR_NOT_INSTALLED'
   | 'AC_ERR_INVALID_ARGS'
   | 'AC_ERR_UNSUPPORTED'
+  | 'AC_ERR_BUSY'
   | 'AC_ERR_INTERNAL'
   | 'AC_ERR_FS_READ'
   | 'AC_ERR_FS_WRITE'
@@ -43,7 +44,7 @@ export interface RpcError {
 export type RpcResponse = RpcSuccess | RpcError;
 
 // App manifest types
-export type ProviderId = 'claude' | 'codex' | 'local';
+export type ProviderId = 'claude' | 'codex' | 'cursor' | 'local';
 
 export interface AppManifestEntry {
   type: 'web';
@@ -115,11 +116,26 @@ export interface ProviderStatus {
   installed: boolean;
   loggedIn: boolean;
   version?: string;
+  updateAvailable?: boolean;
+  latestVersion?: string;
+  updateCheckedAt?: number;
+  updateSource?: 'cli' | 'npm' | 'bun' | 'brew' | 'winget' | 'script' | 'unknown';
+  updateCommand?: string;
+  updateMessage?: string;
+  updateInProgress?: boolean;
 }
 
 export interface ProviderInfo extends ProviderStatus {
   id: ProviderId;
   name: string;
+}
+
+export type ProviderDetailLevel = 'minimal' | 'raw';
+
+export interface ProviderDetail {
+  eventType: string;
+  data?: Record<string, unknown>;
+  raw?: unknown;
 }
 
 export interface ReasoningEffort {
@@ -147,15 +163,35 @@ export interface ProviderLoginOptions {
 }
 
 export interface SessionEvent {
-  type: 'delta' | 'final' | 'usage' | 'status' | 'error' | 'raw_line' | 'provider_event';
+  type:
+    | 'delta'
+    | 'final'
+    | 'usage'
+    | 'status'
+    | 'error'
+    | 'raw_line'
+    | 'message'
+    | 'thinking'
+    | 'tool_call'
+    | 'detail';
   text?: string;
   message?: string;
   line?: string;
   provider?: ProviderId;
-  event?: Record<string, unknown>;
+  providerDetail?: ProviderDetail;
   providerSessionId?: string | null;
   inputTokens?: number;
   outputTokens?: number;
+  role?: 'system' | 'user' | 'assistant';
+  content?: string;
+  contentParts?: unknown;
+  status?: 'thinking' | 'idle' | 'error';
+  phase?: 'delta' | 'start' | 'completed' | 'error';
+  name?: string;
+  callId?: string;
+  input?: unknown;
+  output?: unknown;
+  timestampMs?: number;
 }
 
 export interface RunPromptOptions {
@@ -165,6 +201,7 @@ export interface RunPromptOptions {
   reasoningEffort?: string | null;
   repoRoot?: string;
   cwd?: string;
+  providerDetailLevel?: ProviderDetailLevel;
   signal?: AbortSignal;
   onEvent: (event: SessionEvent) => void;
 }
@@ -185,7 +222,9 @@ export interface Provider {
   id: ProviderId;
   name: string;
   ensureInstalled(): Promise<InstallResult>;
+  fastStatus?(): Promise<ProviderStatus>;
   status(): Promise<ProviderStatus>;
+  update(): Promise<ProviderStatus>;
   login(options?: ProviderLoginOptions): Promise<{ loggedIn: boolean }>;
   logout(): Promise<void>;
   listModels?(): Promise<ModelInfo[]>;
@@ -201,6 +240,7 @@ export interface SessionState {
   reasoningEffort: string | null;
   cwd?: string;
   repoRoot?: string;
+  providerDetailLevel?: ProviderDetailLevel;
 }
 
 export interface BackendState {

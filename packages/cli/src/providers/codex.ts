@@ -1,5 +1,6 @@
 import { spawn } from 'child_process';
 import { readFile } from 'fs/promises';
+import https from 'https';
 import os from 'os';
 import path from 'path';
 import type {
@@ -9,6 +10,8 @@ import type {
   RunPromptResult,
   ReasoningEffort,
   InstallResult,
+  ProviderDetail,
+  CommandResult,
 } from '../types.js';
 import {
   buildInstallCommandAuto,
@@ -20,6 +23,7 @@ import {
   debugLog,
   resolveWindowsCommand,
   resolveCommandPath,
+  resolveCommandRealPath,
   runCommand,
 } from './utils.js';
 
@@ -27,8 +31,23 @@ const CODEX_PACKAGE = '@openai/codex';
 const DEFAULT_LOGIN = 'codex login';
 const DEFAULT_STATUS = 'codex login status';
 const CODEX_MODELS_CACHE_TTL_MS = 60_000;
+const CODEX_UPDATE_CACHE_TTL_MS = 6 * 60 * 60 * 1000;
 let codexModelsCache: ModelInfo[] | null = null;
 let codexModelsCacheAt = 0;
+let codexUpdateCache: {
+  checkedAt: number;
+  updateAvailable?: boolean;
+  latestVersion?: string;
+  updateMessage?: string;
+} | null = null;
+let codexUpdatePromise: Promise<void> | null = null;
+
+type CodexUpdateAction = {
+  command: string;
+  args: string[];
+  source: 'npm' | 'bun' | 'brew';
+  commandLabel: string;
+};
 
 function trimOutput(value: string, limit = 400): string {
   const cleaned = value.trim();
@@ -37,8 +56,184 @@ function trimOutput(value: string, limit = 400): string {
   return `${cleaned.slice(0, limit)}...`;
 }
 
+function normalizePath(value: string): string {
+  const normalized = value.replace(/\\/g, '/');
+  return process.platform === 'win32' ? normalized.toLowerCase() : normalized;
+}
+
 function getCodexConfigDir(): string {
   return process.env.CODEX_CONFIG_DIR || path.join(os.homedir(), '.codex');
+}
+
+function fetchJson(url: string): Promise<unknown> {
+  return new Promise((resolve) => {
+    https
+      .get(url, (res) => {
+        let data = '';
+        res.on('data', (chunk) => {
+          data += chunk;
+        });
+        res.on('end', () => {
+          try {
+            resolve(JSON.parse(data));
+          } catch {
+            resolve(null);
+          }
+        });
+      })
+      .on('error', () => resolve(null));
+  });
+}
+
+function parseSemver(value: string | undefined): [number, number, number] | null {
+  if (!value) return null;
+  const match = value.match(/(\d+)\.(\d+)\.(\d+)/);
+  if (!match) return null;
+  return [Number(match[1]), Number(match[2]), Number(match[3])];
+}
+
+function compareSemver(a: [number, number, number], b: [number, number, number]): number {
+  if (a[0] !== b[0]) return a[0] - b[0];
+  if (a[1] !== b[1]) return a[1] - b[1];
+  return a[2] - b[2];
+}
+
+async function fetchLatestNpmVersion(pkg: string): Promise<string | null> {
+  const encoded = encodeURIComponent(pkg);
+  const data = (await fetchJson(`https://registry.npmjs.org/${encoded}`)) as
+    | { 'dist-tags'?: { latest?: string } }
+    | null;
+  if (!data || typeof data !== 'object') return null;
+  const latest = data['dist-tags']?.latest;
+  return typeof latest === 'string' ? latest : null;
+}
+
+async function fetchBrewFormulaVersion(formula: string): Promise<string | null> {
+  if (!commandExists('brew')) return null;
+  const result = await runCommand('brew', ['info', '--json=v2', formula]);
+  if (result.code !== 0) return null;
+  try {
+    const parsed = JSON.parse(result.stdout) as { formulae?: Array<{ versions?: { stable?: string } }> };
+    const version = parsed?.formulae?.[0]?.versions?.stable;
+    return typeof version === 'string' ? version : null;
+  } catch {
+    return null;
+  }
+}
+
+function getCodexUpdateAction(commandPath: string | null): CodexUpdateAction | null {
+  if (process.env.CODEX_MANAGED_BY_NPM) {
+    return {
+      command: 'npm',
+      args: ['install', '-g', CODEX_PACKAGE],
+      source: 'npm',
+      commandLabel: 'npm install -g @openai/codex',
+    };
+  }
+  if (process.env.CODEX_MANAGED_BY_BUN) {
+    return {
+      command: 'bun',
+      args: ['install', '-g', CODEX_PACKAGE],
+      source: 'bun',
+      commandLabel: 'bun install -g @openai/codex',
+    };
+  }
+  if (commandPath) {
+    const normalized = normalizePath(commandPath);
+    if (normalized.includes('.bun/install/global')) {
+      return {
+        command: 'bun',
+        args: ['install', '-g', CODEX_PACKAGE],
+        source: 'bun',
+        commandLabel: 'bun install -g @openai/codex',
+      };
+    }
+    if (normalized.includes('/node_modules/.bin/') || normalized.includes('/lib/node_modules/')) {
+      return {
+        command: 'npm',
+        args: ['install', '-g', CODEX_PACKAGE],
+        source: 'npm',
+        commandLabel: 'npm install -g @openai/codex',
+      };
+    }
+  }
+  if (
+    process.platform === 'darwin' &&
+    commandPath &&
+    (commandPath.startsWith('/opt/homebrew') || commandPath.startsWith('/usr/local'))
+  ) {
+    return {
+      command: 'brew',
+      args: ['upgrade', 'codex'],
+      source: 'brew',
+      commandLabel: 'brew upgrade codex',
+    };
+  }
+  return null;
+}
+
+function getCodexUpdateSnapshot(commandPath: string | null): {
+  updateAvailable?: boolean;
+  latestVersion?: string;
+  updateCheckedAt?: number;
+  updateSource?: 'npm' | 'bun' | 'brew' | 'unknown';
+  updateCommand?: string;
+  updateMessage?: string;
+} {
+  if (codexUpdateCache && Date.now() - codexUpdateCache.checkedAt < CODEX_UPDATE_CACHE_TTL_MS) {
+    const action = getCodexUpdateAction(commandPath);
+    return {
+      updateAvailable: codexUpdateCache.updateAvailable,
+      latestVersion: codexUpdateCache.latestVersion,
+      updateCheckedAt: codexUpdateCache.checkedAt,
+      updateSource: action?.source ?? 'unknown',
+      updateCommand: action?.commandLabel,
+      updateMessage: codexUpdateCache.updateMessage,
+    };
+  }
+  return {};
+}
+
+function ensureCodexUpdateCheck(currentVersion?: string, commandPath?: string | null): void {
+  if (codexUpdateCache && Date.now() - codexUpdateCache.checkedAt < CODEX_UPDATE_CACHE_TTL_MS) {
+    return;
+  }
+  if (codexUpdatePromise) return;
+  codexUpdatePromise = (async () => {
+    const action = getCodexUpdateAction(commandPath || null);
+    let latest: string | null = null;
+    if (action?.source === 'brew') {
+      latest = await fetchBrewFormulaVersion('codex');
+    } else {
+      latest = await fetchLatestNpmVersion(CODEX_PACKAGE);
+    }
+    let updateAvailable: boolean | undefined;
+    let updateMessage: string | undefined;
+    if (latest && currentVersion) {
+      const a = parseSemver(currentVersion);
+      const b = parseSemver(latest);
+      if (a && b) {
+        updateAvailable = compareSemver(a, b) < 0;
+        updateMessage = updateAvailable
+          ? `Update available: ${currentVersion} -> ${latest}`
+          : `Up to date (${currentVersion})`;
+      }
+    }
+    codexUpdateCache = {
+      checkedAt: Date.now(),
+      updateAvailable,
+      latestVersion: latest ?? undefined,
+      updateMessage,
+    };
+    debugLog('Codex', 'update-check', {
+      currentVersion,
+      latest,
+      updateAvailable,
+      message: updateMessage,
+    });
+  })().finally(() => {
+    codexUpdatePromise = null;
+  });
 }
 
 function hasAuthValue(value: unknown): boolean {
@@ -200,7 +395,53 @@ export async function getCodexStatus(): Promise<ProviderStatus> {
     }
   }
 
-  return { installed, loggedIn, version: versionCheck.version || undefined };
+  const resolved = resolveCommandRealPath(command);
+  if (installed) {
+    ensureCodexUpdateCheck(versionCheck.version, resolved || null);
+  }
+  const updateInfo = installed ? getCodexUpdateSnapshot(resolved || null) : {};
+  return { installed, loggedIn, version: versionCheck.version || undefined, ...updateInfo };
+}
+
+export async function getCodexFastStatus(): Promise<ProviderStatus> {
+  const command = getCodexCommand();
+  const loggedIn = await hasCodexAuth();
+  const installed = commandExists(command) || loggedIn;
+  return { installed, loggedIn };
+}
+
+export async function updateCodex(): Promise<ProviderStatus> {
+  const command = getCodexCommand();
+  if (!commandExists(command)) {
+    return { installed: false, loggedIn: false };
+  }
+  const resolved = resolveCommandRealPath(command);
+  const updateOverride = buildStatusCommand('AGENTCONNECT_CODEX_UPDATE', '');
+  const action = updateOverride.command ? null : getCodexUpdateAction(resolved || null);
+  const updateCommand = updateOverride.command || action?.command || '';
+  const updateArgs = updateOverride.command ? updateOverride.args : action?.args || [];
+
+  if (!updateCommand) {
+    throw new Error('No update command available. Please update Codex manually.');
+  }
+
+  const cmd = resolveWindowsCommand(updateCommand);
+  debugLog('Codex', 'update-run', { command: cmd, args: updateArgs });
+  const result: CommandResult = await runCommand(cmd, updateArgs, {
+    env: { ...process.env, CI: '1' },
+  });
+  debugLog('Codex', 'update-result', {
+    code: result.code,
+    stdout: trimOutput(result.stdout),
+    stderr: trimOutput(result.stderr),
+  });
+  if (result.code !== 0 && result.code !== null) {
+    const message = trimOutput(`${result.stdout}\n${result.stderr}`, 800) || 'Update failed';
+    throw new Error(message);
+  }
+  codexUpdateCache = null;
+  codexUpdatePromise = null;
+  return getCodexStatus();
 }
 
 export async function loginCodex(): Promise<{ loggedIn: boolean }> {
@@ -266,6 +507,10 @@ interface CodexItem {
   exit_code?: number;
   status?: string;
   text?: string;
+  name?: string;
+  input?: unknown;
+  output?: unknown;
+  [key: string]: unknown;
 }
 
 function extractSessionId(ev: CodexEvent): string | null {
@@ -565,6 +810,7 @@ export function runCodexPrompt({
   reasoningEffort,
   repoRoot,
   cwd,
+  providerDetailLevel,
   onEvent,
   signal,
 }: RunPromptOptions): Promise<RunPromptResult> {
@@ -609,10 +855,96 @@ export function runCodexPrompt({
         let didFinalize = false;
         let sawError = false;
 
-        const emitError = (message: string): void => {
+        const includeRaw = providerDetailLevel === 'raw';
+        const buildProviderDetail = (
+          eventType: string,
+          data?: Record<string, unknown>,
+          raw?: unknown
+        ): ProviderDetail => {
+          const detail: ProviderDetail = { eventType };
+          if (data && Object.keys(data).length) detail.data = data;
+          if (includeRaw && raw !== undefined) detail.raw = raw;
+          return detail;
+        };
+        const emit = (event: Parameters<RunPromptOptions['onEvent']>[0]): void => {
+          if (finalSessionId) {
+            onEvent({ ...event, providerSessionId: finalSessionId });
+          } else {
+            onEvent(event);
+          }
+        };
+
+        const emitError = (message: string, providerDetail?: ProviderDetail): void => {
           if (sawError) return;
           sawError = true;
-          onEvent({ type: 'error', message });
+          emit({ type: 'error', message, providerDetail });
+        };
+        const emitItemEvent = (item: CodexItem, phase: 'start' | 'completed'): void => {
+          const itemType = typeof item.type === 'string' ? item.type : '';
+          if (!itemType) return;
+          const providerDetail = buildProviderDetail(
+            phase === 'start' ? 'item.started' : 'item.completed',
+            {
+              itemType,
+              itemId: item.id,
+              status: item.status,
+            },
+            item
+          );
+          if (itemType === 'agent_message') {
+            if (phase === 'completed' && typeof item.text === 'string') {
+              emit({
+                type: 'message',
+                provider: 'codex',
+                role: 'assistant',
+                content: item.text,
+                contentParts: item,
+                providerDetail,
+              });
+            }
+            return;
+          }
+          if (itemType === 'reasoning') {
+            emit({
+              type: 'thinking',
+              provider: 'codex',
+              phase,
+              text: typeof item.text === 'string' ? item.text : undefined,
+              providerDetail,
+            });
+            return;
+          }
+          if (itemType === 'command_execution') {
+            const output =
+              phase === 'completed'
+                ? {
+                    output: item.aggregated_output,
+                    exitCode: item.exit_code,
+                    status: item.status,
+                  }
+                : undefined;
+            emit({
+              type: 'tool_call',
+              provider: 'codex',
+              name: 'command_execution',
+              callId: item.id,
+              input: { command: item.command },
+              output,
+              phase,
+              providerDetail,
+            });
+            return;
+          }
+          emit({
+            type: 'tool_call',
+            provider: 'codex',
+            name: itemType,
+            callId: item.id,
+            input: phase === 'start' ? item : undefined,
+            output: phase === 'completed' ? item : undefined,
+            phase,
+            providerDetail,
+          });
         };
         let sawJson = false;
         const stdoutLines: string[] = [];
@@ -623,19 +955,15 @@ export function runCodexPrompt({
           if (list.length > 12) list.shift();
         };
 
-        const emitFinal = (text: string): void => {
-          if (finalSessionId) {
-            onEvent({ type: 'final', text, providerSessionId: finalSessionId });
-          } else {
-            onEvent({ type: 'final', text });
-          }
+        const emitFinal = (text: string, providerDetail?: ProviderDetail): void => {
+          emit({ type: 'final', text, providerDetail });
         };
 
         const handleLine = (line: string, source: 'stdout' | 'stderr'): void => {
           const parsed = safeJsonParse(line);
           if (!parsed || typeof parsed !== 'object') {
             if (line.trim()) {
-              onEvent({ type: 'raw_line', line });
+              emit({ type: 'raw_line', line });
             }
             if (source === 'stdout') {
               pushLine(stdoutLines, line);
@@ -647,49 +975,90 @@ export function runCodexPrompt({
           sawJson = true;
           const ev = parsed as CodexEvent;
           const normalized = normalizeEvent(ev);
-          onEvent({ type: 'provider_event', provider: 'codex', event: normalized });
           const sid = extractSessionId(ev);
           if (sid) finalSessionId = sid;
 
+          const eventType = typeof ev.type === 'string' ? ev.type : normalized.type;
+          const detailData: Record<string, unknown> = {};
+          const threadId = ev.thread_id ?? ev.threadId;
+          if (typeof threadId === 'string' && threadId) detailData.threadId = threadId;
+          const providerDetail = buildProviderDetail(eventType || 'unknown', detailData, ev);
+          let handled = false;
+
           const usage = extractUsage(ev);
           if (usage) {
-            onEvent({
+            emit({
               type: 'usage',
               inputTokens: usage.input_tokens,
               outputTokens: usage.output_tokens,
+              providerDetail,
             });
+            handled = true;
           }
 
           if (normalized.type === 'agent_message') {
             const text = normalized.text;
             if (typeof text === 'string' && text) {
               aggregated += text;
-              onEvent({ type: 'delta', text });
+              emit({ type: 'delta', text, providerDetail });
+              emit({
+                type: 'message',
+                provider: 'codex',
+                role: 'assistant',
+                content: text,
+                contentParts: ev,
+                providerDetail,
+              });
+              handled = true;
             }
           } else if (normalized.type === 'item.completed') {
             const item = normalized.item;
             if (item && typeof item === 'object') {
+              const itemDetail = buildProviderDetail('item.completed', {
+                itemType: (item as CodexItem).type,
+                itemId: (item as CodexItem).id,
+                status: (item as CodexItem).status,
+              }, item);
               if (item.type === 'command_execution' && typeof item.aggregated_output === 'string') {
-                onEvent({ type: 'delta', text: item.aggregated_output });
+                emit({ type: 'delta', text: item.aggregated_output, providerDetail: itemDetail });
               }
               if (item.type === 'agent_message' && typeof item.text === 'string') {
                 aggregated += item.text;
-                onEvent({ type: 'delta', text: item.text });
+                emit({ type: 'delta', text: item.text, providerDetail: itemDetail });
               }
             }
+          }
+          if (normalized.type === 'item.started' && ev.item && typeof ev.item === 'object') {
+            emitItemEvent(ev.item as CodexItem, 'start');
+            handled = true;
+          }
+          if (normalized.type === 'item.completed' && ev.item && typeof ev.item === 'object') {
+            emitItemEvent(ev.item as CodexItem, 'completed');
+            handled = true;
+          }
+
+          if (normalized.type === 'error') {
+            emitError(normalized.message || 'Codex run failed', providerDetail);
+            handled = true;
           }
 
           if (isTerminalEvent(ev) && !didFinalize) {
             if (ev.type === 'turn.failed') {
               const message = ev.error?.message;
-              emitError(typeof message === 'string' ? message : 'Codex run failed');
+              emitError(typeof message === 'string' ? message : 'Codex run failed', providerDetail);
               didFinalize = true;
+              handled = true;
               return;
             }
             if (!sawError) {
               didFinalize = true;
-              emitFinal(aggregated);
+              emitFinal(aggregated, providerDetail);
+              handled = true;
             }
+          }
+
+          if (!handled) {
+            emit({ type: 'detail', provider: 'codex', providerDetail });
           }
         };
 

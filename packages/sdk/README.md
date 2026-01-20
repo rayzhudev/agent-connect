@@ -70,9 +70,9 @@ session.on('raw_line', (event) => {
   console.log('CLI:', event.line);
 });
 
-session.on('provider_event', (event) => {
+session.on('detail', (event) => {
   if (event.provider === 'codex') {
-    console.log('Codex event:', event.event);
+    console.log('Codex detail:', event.providerDetail);
   }
 });
 ```

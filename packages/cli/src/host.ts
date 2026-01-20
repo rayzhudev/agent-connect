@@ -17,6 +17,7 @@ import type {
   InstallResult,
 } from './types.js';
 import { listModels, listRecentModels, providers, resolveProviderForModel } from './providers/index.js';
+import { debugLog } from './providers/utils.js';
 import { createObservedTracker } from './observed.js';
 
 interface RpcPayload {
@@ -50,6 +51,15 @@ function sessionEvent(
   type: string,
   data: Record<string, unknown>
 ): void {
+  if (process.env.AGENTCONNECT_DEBUG?.trim()) {
+    try {
+      console.log(
+        `[AgentConnect][Session ${sessionId}] ${type} ${JSON.stringify(data)}`
+      );
+    } catch {
+      console.log(`[AgentConnect][Session ${sessionId}] ${type}`);
+    }
+  }
   send(socket, {
     jsonrpc: '2.0',
     method: 'acp.session.event',
@@ -66,6 +76,13 @@ function buildProviderList(statuses: Record<string, ProviderStatus>): ProviderIn
       installed: info.installed ?? false,
       loggedIn: info.loggedIn ?? false,
       version: info.version,
+      updateAvailable: info.updateAvailable,
+      latestVersion: info.latestVersion,
+      updateCheckedAt: info.updateCheckedAt,
+      updateSource: info.updateSource,
+      updateCommand: info.updateCommand,
+      updateMessage: info.updateMessage,
+      updateInProgress: info.updateInProgress,
     };
   });
 }
@@ -88,10 +105,12 @@ export function startDevHost({
   const wss = new WebSocketServer({ server });
   const sessions = new Map<string, SessionState>();
   const activeRuns = new Map<string, AbortController>();
+  const updatingProviders = new Map<ProviderId, Promise<ProviderStatus>>();
   const processTable = new Map<number, ChildProcess>();
   const backendState = new Map<string, BackendState>();
   const statusCache = new Map<string, { status: ProviderStatus; at: number }>();
-  const statusCacheTtlMs = 2000;
+  const statusCacheTtlMs = 8000;
+  const statusInFlight = new Map<ProviderId, Promise<ProviderStatus>>();
   const basePath = appPath || process.cwd();
   const manifest = readManifest(basePath);
   const appId = manifest?.id || 'agentconnect-dev-app';
@@ -166,16 +185,57 @@ export function startDevHost({
   }
 
   async function getCachedStatus(
-    provider: (typeof providers)[ProviderId]
+    provider: (typeof providers)[ProviderId],
+    options: { allowFast?: boolean } = {}
   ): Promise<ProviderStatus> {
     const cached = statusCache.get(provider.id);
     const now = Date.now();
     if (cached && now - cached.at < statusCacheTtlMs) {
       return cached.status;
     }
-    const status = await provider.status();
-    statusCache.set(provider.id, { status, at: now });
-    return status;
+    const existing = statusInFlight.get(provider.id);
+    if (existing) return existing;
+    if (options.allowFast && provider.fastStatus) {
+      try {
+        const fast = await provider.fastStatus();
+        const startedAt = Date.now();
+        const promise = provider
+          .status()
+          .then((status) => {
+            debugLog('Providers', 'status-check', {
+              providerId: provider.id,
+              durationMs: Date.now() - startedAt,
+              completedAt: new Date().toISOString(),
+            });
+            statusCache.set(provider.id, { status, at: Date.now() });
+            return status;
+          })
+          .finally(() => {
+            statusInFlight.delete(provider.id);
+          });
+        statusInFlight.set(provider.id, promise);
+        return fast;
+      } catch {
+        // fall through to full status
+      }
+    }
+    const startedAt = Date.now();
+    const promise = provider
+      .status()
+      .then((status) => {
+        debugLog('Providers', 'status-check', {
+          providerId: provider.id,
+          durationMs: Date.now() - startedAt,
+          completedAt: new Date().toISOString(),
+        });
+        statusCache.set(provider.id, { status, at: Date.now() });
+        return status;
+      })
+      .finally(() => {
+        statusInFlight.delete(provider.id);
+      });
+    statusInFlight.set(provider.id, promise);
+    return promise;
   }
 
   function invalidateStatus(providerId: ProviderId): void {
@@ -226,14 +286,18 @@ export function startDevHost({
         const statusEntries = await Promise.all(
           Object.values(providers).map(async (provider) => {
             try {
-              return [provider.id, await getCachedStatus(provider)] as const;
+              return [provider.id, await getCachedStatus(provider, { allowFast: true })] as const;
             } catch {
               return [provider.id, { installed: false, loggedIn: false }] as const;
             }
           })
         );
         const statuses = Object.fromEntries(statusEntries);
-        reply(socket, id, { providers: buildProviderList(statuses) });
+        const list = buildProviderList(statuses).map((entry) => ({
+          ...entry,
+          updateInProgress: updatingProviders.has(entry.id),
+        }));
+        reply(socket, id, { providers: list });
         return;
       }
 
@@ -244,7 +308,7 @@ export function startDevHost({
           replyError(socket, id, 'AC_ERR_UNSUPPORTED', 'Unknown provider');
           return;
         }
-        const status = await getCachedStatus(provider);
+        const status = await getCachedStatus(provider, { allowFast: true });
         reply(socket, id, {
           provider: {
             id: provider.id,
@@ -252,8 +316,66 @@ export function startDevHost({
             installed: status.installed,
             loggedIn: status.loggedIn,
             version: status.version,
+            updateAvailable: status.updateAvailable,
+            latestVersion: status.latestVersion,
+            updateCheckedAt: status.updateCheckedAt,
+            updateSource: status.updateSource,
+            updateCommand: status.updateCommand,
+            updateMessage: status.updateMessage,
+            updateInProgress: updatingProviders.has(provider.id) || status.updateInProgress,
           },
         });
+        return;
+      }
+
+      if (method === 'acp.providers.update') {
+        const providerId = params.provider as ProviderId;
+        const provider = providers[providerId];
+        if (!provider) {
+          replyError(socket, id, 'AC_ERR_UNSUPPORTED', 'Unknown provider');
+          return;
+        }
+        debugLog('Providers', 'update-start', { providerId });
+        if (!updatingProviders.has(providerId)) {
+          const promise = provider
+            .update()
+            .finally(() => {
+              updatingProviders.delete(providerId);
+              invalidateStatus(providerId);
+            });
+          updatingProviders.set(providerId, promise);
+        }
+        try {
+          const status = await updatingProviders.get(providerId)!;
+          debugLog('Providers', 'update-complete', {
+            providerId,
+            updateAvailable: status.updateAvailable,
+            latestVersion: status.latestVersion,
+            updateMessage: status.updateMessage,
+          });
+          reply(socket, id, {
+            provider: {
+              id: provider.id,
+              name: provider.name,
+              installed: status.installed,
+              loggedIn: status.loggedIn,
+              version: status.version,
+              updateAvailable: status.updateAvailable,
+              latestVersion: status.latestVersion,
+              updateCheckedAt: status.updateCheckedAt,
+              updateSource: status.updateSource,
+              updateCommand: status.updateCommand,
+              updateMessage: status.updateMessage,
+              updateInProgress: false,
+            },
+          });
+        } catch (err: unknown) {
+          debugLog('Providers', 'update-error', {
+            providerId,
+            message: err instanceof Error ? err.message : String(err),
+          });
+          replyError(socket, id, 'AC_ERR_INTERNAL', (err as Error)?.message || 'Update failed');
+        }
         return;
       }
 
@@ -340,6 +462,7 @@ export function startDevHost({
         const reasoningEffort = (params.reasoningEffort as string) || null;
         const cwd = params.cwd ? resolveAppPathInternal(params.cwd) : undefined;
         const repoRoot = params.repoRoot ? resolveAppPathInternal(params.repoRoot) : undefined;
+        const providerDetailLevel = (params.providerDetailLevel as string) || undefined;
         const providerId = resolveProviderForModel(model);
         recordModelCapability(model);
         sessions.set(sessionId, {
@@ -350,6 +473,10 @@ export function startDevHost({
           reasoningEffort,
           cwd,
           repoRoot,
+          providerDetailLevel:
+            providerDetailLevel === 'raw' || providerDetailLevel === 'minimal'
+              ? providerDetailLevel
+              : undefined,
         });
         reply(socket, id, { sessionId });
         return;
@@ -363,6 +490,7 @@ export function startDevHost({
           const reasoningEffort = (params.reasoningEffort as string) || null;
           const cwd = params.cwd ? resolveAppPathInternal(params.cwd) : undefined;
           const repoRoot = params.repoRoot ? resolveAppPathInternal(params.repoRoot) : undefined;
+          const providerDetailLevel = (params.providerDetailLevel as string) || undefined;
           recordModelCapability(model);
           sessions.set(sessionId, {
             id: sessionId,
@@ -372,6 +500,10 @@ export function startDevHost({
             reasoningEffort,
             cwd,
             repoRoot,
+            providerDetailLevel:
+              providerDetailLevel === 'raw' || providerDetailLevel === 'minimal'
+                ? providerDetailLevel
+                : undefined,
           });
         } else {
           if (params.providerSessionId) {
@@ -382,6 +514,12 @@ export function startDevHost({
           }
           if (params.repoRoot) {
             existing.repoRoot = resolveAppPathInternal(params.repoRoot);
+          }
+          if (params.providerDetailLevel) {
+            const level = String(params.providerDetailLevel);
+            if (level === 'raw' || level === 'minimal') {
+              existing.providerDetailLevel = level;
+            }
           }
           recordModelCapability(existing.model);
         }
@@ -404,6 +542,10 @@ export function startDevHost({
           replyError(socket, id, 'AC_ERR_UNSUPPORTED', 'Unknown provider');
           return;
         }
+        if (updatingProviders.has(session.providerId)) {
+          replyError(socket, id, 'AC_ERR_BUSY', 'Provider update in progress.');
+          return;
+        }
 
         const status = await provider.status();
         if (!status.installed) {
@@ -419,6 +561,10 @@ export function startDevHost({
         const repoRoot = params.repoRoot
           ? resolveAppPathInternal(params.repoRoot)
           : session.repoRoot || basePath;
+        const providerDetailLevel =
+          params.providerDetailLevel === 'raw' || params.providerDetailLevel === 'minimal'
+            ? (params.providerDetailLevel as 'raw' | 'minimal')
+            : session.providerDetailLevel || 'minimal';
         activeRuns.set(sessionId, controller);
         let sawError = false;
 
@@ -430,6 +576,7 @@ export function startDevHost({
             reasoningEffort: session.reasoningEffort,
             repoRoot,
             cwd,
+            providerDetailLevel,
             signal: controller.signal,
             onEvent: (event) => {
               if (event.type === 'error') {

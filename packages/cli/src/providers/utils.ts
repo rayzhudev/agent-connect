@@ -1,5 +1,5 @@
 import { spawn, type SpawnOptions } from 'child_process';
-import { existsSync } from 'fs';
+import { existsSync, realpathSync } from 'fs';
 import os from 'os';
 import path from 'path';
 import type { CommandResult } from '../types.js';
@@ -134,6 +134,16 @@ export function resolveCommandPath(command: string): string | null {
   return null;
 }
 
+export function resolveCommandRealPath(command: string): string | null {
+  const resolved = resolveCommandPath(command);
+  if (!resolved) return null;
+  try {
+    return realpathSync(resolved);
+  } catch {
+    return resolved;
+  }
+}
+
 export function commandExists(command: string): boolean {
   return Boolean(resolveCommandPath(command));
 }
@@ -160,6 +170,12 @@ export function runCommand(
       resolve({ code: 127, stdout: '', stderr: `Executable not found in PATH: "${command}"` });
       return;
     }
+    const startedAt = Date.now();
+    debugLog('Command', 'run', {
+      command: resolved,
+      args,
+      startedAt: new Date(startedAt).toISOString(),
+    });
     const child = spawn(resolved, args, {
       ...spawnOptions,
       stdio: ['pipe', 'pipe', 'pipe'],
@@ -191,15 +207,27 @@ export function runCommand(
 
     child.on('error', (err: Error) => {
       if (timeout) clearTimeout(timeout);
+      debugLog('Command', 'result', {
+        command: resolved,
+        code: -1,
+        durationMs: Date.now() - startedAt,
+        error: err.message,
+      });
       resolve({ code: -1, stdout, stderr: `${stderr}${err.message}` });
     });
 
     child.on('close', (code) => {
       if (timeout) clearTimeout(timeout);
+      debugLog('Command', 'result', {
+        command: resolved,
+        code: code ?? 0,
+        durationMs: Date.now() - startedAt,
+      });
       resolve({ code: code ?? 0, stdout, stderr });
     });
   });
 }
+
 
 export function createLineParser(onLine: (line: string) => void): (chunk: Buffer | string) => void {
   let buffer = '';

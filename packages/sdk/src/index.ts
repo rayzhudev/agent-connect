@@ -1,4 +1,4 @@
-export type ProviderId = 'claude' | 'codex' | 'local';
+export type ProviderId = 'claude' | 'codex' | 'cursor' | 'local';
 
 export type PackageManager = 'bun' | 'pnpm' | 'npm' | 'brew' | 'unknown';
 
@@ -14,6 +14,13 @@ export type ProviderInfo = {
   installed: boolean;
   loggedIn: boolean;
   version?: string;
+  updateAvailable?: boolean;
+  latestVersion?: string;
+  updateCheckedAt?: number;
+  updateSource?: 'cli' | 'npm' | 'bun' | 'brew' | 'winget' | 'script' | 'unknown';
+  updateCommand?: string;
+  updateMessage?: string;
+  updateInProgress?: boolean;
 };
 
 export type ReasoningEffortOption = {
@@ -31,14 +38,77 @@ export type ModelInfo = {
   defaultReasoningEffort?: string;
 };
 
+export type ProviderDetailLevel = 'minimal' | 'raw';
+
+export type ProviderDetail = {
+  eventType: string;
+  data?: Record<string, unknown>;
+  raw?: unknown;
+};
+
 export type SessionEvent =
-  | { type: 'delta'; text: string }
-  | { type: 'final'; text: string; providerSessionId?: string | null }
-  | { type: 'usage'; usage: Record<string, number> }
-  | { type: 'status'; status: 'thinking' | 'idle' | 'error'; error?: string }
-  | { type: 'error'; message: string }
-  | { type: 'raw_line'; line: string }
-  | { type: 'provider_event'; provider?: ProviderId; event: Record<string, unknown> };
+  | { type: 'delta'; text: string; providerSessionId?: string | null; providerDetail?: ProviderDetail }
+  | {
+      type: 'final';
+      text: string;
+      providerSessionId?: string | null;
+      providerDetail?: ProviderDetail;
+    }
+  | {
+      type: 'usage';
+      usage: Record<string, number>;
+      providerSessionId?: string | null;
+      providerDetail?: ProviderDetail;
+    }
+  | {
+      type: 'status';
+      status: 'thinking' | 'idle' | 'error';
+      error?: string;
+      providerSessionId?: string | null;
+      providerDetail?: ProviderDetail;
+    }
+  | { type: 'error'; message: string; providerSessionId?: string | null; providerDetail?: ProviderDetail }
+  | {
+      type: 'raw_line';
+      line: string;
+      providerSessionId?: string | null;
+      providerDetail?: ProviderDetail;
+    }
+  | {
+      type: 'message';
+      provider?: ProviderId;
+      role: 'system' | 'user' | 'assistant';
+      content: string;
+      contentParts?: unknown;
+      providerSessionId?: string | null;
+      providerDetail?: ProviderDetail;
+    }
+  | {
+      type: 'thinking';
+      provider?: ProviderId;
+      phase: 'delta' | 'start' | 'completed' | 'error';
+      text?: string;
+      timestampMs?: number;
+      providerSessionId?: string | null;
+      providerDetail?: ProviderDetail;
+    }
+  | {
+      type: 'tool_call';
+      provider?: ProviderId;
+      name?: string;
+      callId?: string;
+      input?: unknown;
+      output?: unknown;
+      phase?: 'delta' | 'start' | 'completed' | 'error';
+      providerSessionId?: string | null;
+      providerDetail?: ProviderDetail;
+    }
+  | {
+      type: 'detail';
+      provider?: ProviderId;
+      providerSessionId?: string | null;
+      providerDetail: ProviderDetail;
+    };
 
 export type ProviderLoginOptions = {
   baseUrl?: string;
@@ -66,12 +136,14 @@ export type SessionCreateOptions = {
   temperature?: number;
   maxTokens?: number;
   topP?: number;
+  providerDetailLevel?: ProviderDetailLevel;
 };
 
 export type SessionSendOptions = {
   metadata?: Record<string, unknown>;
   cwd?: string;
   repoRoot?: string;
+  providerDetailLevel?: ProviderDetailLevel;
 };
 
 export type SessionResumeOptions = {
@@ -80,6 +152,7 @@ export type SessionResumeOptions = {
   providerSessionId?: string | null;
   cwd?: string;
   repoRoot?: string;
+  providerDetailLevel?: ProviderDetailLevel;
 };
 
 export interface AgentConnectSession {
@@ -109,6 +182,7 @@ export interface AgentConnectClient {
     list(): Promise<ProviderInfo[]>;
     status(provider: ProviderId): Promise<ProviderInfo>;
     ensureInstalled(provider: ProviderId): Promise<InstallResult>;
+    update(provider: ProviderId): Promise<ProviderInfo>;
     login(provider: ProviderId, options?: ProviderLoginOptions): Promise<{ loggedIn: boolean }>;
     logout(provider: ProviderId): Promise<{ loggedIn: boolean }>;
   };
@@ -399,6 +473,7 @@ class AgentConnectSessionImpl implements AgentConnectSession {
       metadata: normalized.metadata,
       cwd: normalized.cwd,
       repoRoot: normalized.repoRoot,
+      providerDetailLevel: normalized.providerDetailLevel,
     });
   }
 
@@ -441,7 +516,8 @@ class AgentConnectSessionImpl implements AgentConnectSession {
     if (
       'metadata' in candidate ||
       'cwd' in candidate ||
-      'repoRoot' in candidate
+      'repoRoot' in candidate ||
+      'providerDetailLevel' in candidate
     ) {
       return candidate;
     }
@@ -470,8 +546,32 @@ class AgentConnectClientImpl implements AgentConnectClient {
   }
 
   private normalizeEvent(type: string, data?: Record<string, unknown>): SessionEvent | null {
+    const parseProviderDetail = (): ProviderDetail | undefined => {
+      const detail = data?.providerDetail;
+      if (!detail || typeof detail !== 'object') return undefined;
+      const record = detail as Record<string, unknown>;
+      const eventType = typeof record.eventType === 'string' ? record.eventType : '';
+      if (!eventType) return undefined;
+      const raw = 'raw' in record ? record.raw : undefined;
+      const dataField =
+        record.data && typeof record.data === 'object'
+          ? (record.data as Record<string, unknown>)
+          : undefined;
+      const out: ProviderDetail = { eventType };
+      if (dataField) out.data = dataField;
+      if (raw !== undefined) out.raw = raw;
+      return out;
+    };
+    const providerDetail = parseProviderDetail();
+    const providerSessionId =
+      typeof data?.providerSessionId === 'string' ? data.providerSessionId : undefined;
     if (type === 'delta') {
-      return { type: 'delta', text: String(data?.text ?? '') };
+      return {
+        type: 'delta',
+        text: String(data?.text ?? ''),
+        providerSessionId,
+        ...(providerDetail && { providerDetail }),
+      };
     }
     if (type === 'final') {
       const providerSessionId =
@@ -480,30 +580,117 @@ class AgentConnectClientImpl implements AgentConnectClient {
           : typeof data?.sessionId === 'string'
             ? data.sessionId
             : undefined;
-      return { type: 'final', text: String(data?.text ?? ''), providerSessionId };
+      return {
+        type: 'final',
+        text: String(data?.text ?? ''),
+        providerSessionId,
+        ...(providerDetail && { providerDetail }),
+      };
     }
     if (type === 'usage') {
-      return { type: 'usage', usage: (data?.usage as Record<string, number>) ?? {} };
+      return {
+        type: 'usage',
+        usage: (data?.usage as Record<string, number>) ?? {},
+        providerSessionId,
+        ...(providerDetail && { providerDetail }),
+      };
     }
     if (type === 'status') {
       const status = String(data?.status ?? 'idle') as 'thinking' | 'idle' | 'error';
       const error = typeof data?.error === 'string' ? data.error : undefined;
-      return { type: 'status', status, error };
+      return {
+        type: 'status',
+        status,
+        error,
+        providerSessionId,
+        ...(providerDetail && { providerDetail }),
+      };
     }
     if (type === 'error') {
-      return { type: 'error', message: String(data?.message ?? 'Unknown error') };
+      return {
+        type: 'error',
+        message: String(data?.message ?? 'Unknown error'),
+        providerSessionId,
+        ...(providerDetail && { providerDetail }),
+      };
     }
     if (type === 'raw_line') {
-      return { type: 'raw_line', line: String(data?.line ?? '') };
+      return {
+        type: 'raw_line',
+        line: String(data?.line ?? ''),
+        providerSessionId,
+        ...(providerDetail && { providerDetail }),
+      };
     }
-    if (type === 'provider_event') {
+    if (type === 'message') {
       const provider =
         typeof data?.provider === 'string' ? (data.provider as ProviderId) : undefined;
-      const event =
-        data?.event && typeof data.event === 'object'
-          ? (data.event as Record<string, unknown>)
-          : {};
-      return { type: 'provider_event', provider, event };
+      const role =
+        data?.role === 'system' || data?.role === 'user' || data?.role === 'assistant'
+          ? data.role
+          : 'assistant';
+      const content = String(data?.content ?? '');
+      const contentParts = data?.contentParts;
+      return {
+        type: 'message',
+        provider,
+        role,
+        content,
+        contentParts,
+        providerSessionId,
+        providerDetail,
+      };
+    }
+    if (type === 'thinking') {
+      const provider =
+        typeof data?.provider === 'string' ? (data.provider as ProviderId) : undefined;
+      const phase =
+        data?.phase === 'start' ||
+        data?.phase === 'completed' ||
+        data?.phase === 'error' ||
+        data?.phase === 'delta'
+          ? data.phase
+          : 'delta';
+      const text = typeof data?.text === 'string' ? data.text : undefined;
+      const timestampMs = typeof data?.timestampMs === 'number' ? data.timestampMs : undefined;
+      return {
+        type: 'thinking',
+        provider,
+        phase,
+        text,
+        timestampMs,
+        providerSessionId,
+        providerDetail,
+      };
+    }
+    if (type === 'tool_call') {
+      const provider =
+        typeof data?.provider === 'string' ? (data.provider as ProviderId) : undefined;
+      const name = typeof data?.name === 'string' ? data.name : undefined;
+      const callId = typeof data?.callId === 'string' ? data.callId : undefined;
+      const phase =
+        data?.phase === 'start' ||
+        data?.phase === 'completed' ||
+        data?.phase === 'error' ||
+        data?.phase === 'delta'
+          ? data.phase
+          : undefined;
+      return {
+        type: 'tool_call',
+        provider,
+        name,
+        callId,
+        input: data?.input,
+        output: data?.output,
+        phase,
+        providerSessionId,
+        providerDetail,
+      };
+    }
+    if (type === 'detail' && providerDetail) {
+      const provider =
+        typeof data?.provider === 'string' ? (data.provider as ProviderId) : undefined;
+      return { type: 'detail', provider, providerDetail, providerSessionId };
     }
     return null;
   }
@@ -540,6 +727,12 @@ class AgentConnectClientImpl implements AgentConnectClient {
     },
     status: async (provider: ProviderId): Promise<ProviderInfo> => {
       const res = (await this.request('acp.providers.status', { provider })) as {
+        provider: ProviderInfo;
+      };
+      return res.provider;
+    },
+    update: async (provider: ProviderId): Promise<ProviderInfo> => {
+      const res = (await this.request('acp.providers.update', { provider })) as {
         provider: ProviderInfo;
       };
       return res.provider;

@@ -1,25 +1,39 @@
 import type { Provider, ProviderId, ModelInfo } from '../types.js';
 import {
   ensureClaudeInstalled,
+  getClaudeFastStatus,
   getClaudeStatus,
   listClaudeModels,
   listClaudeRecentModels,
   loginClaude,
   runClaudePrompt,
+  updateClaude,
 } from './claude.js';
 import {
   ensureCodexInstalled,
+  getCodexFastStatus,
   getCodexStatus,
   listCodexModels,
   loginCodex,
   runCodexPrompt,
+  updateCodex,
 } from './codex.js';
+import {
+  ensureCursorInstalled,
+  getCursorFastStatus,
+  getCursorStatus,
+  listCursorModels,
+  loginCursor,
+  runCursorPrompt,
+  updateCursor,
+} from './cursor.js';
 import {
   ensureLocalInstalled,
   getLocalStatus,
   listLocalModels,
   loginLocal,
   runLocalPrompt,
+  updateLocal,
 } from './local.js';
 
 export const providers: Record<ProviderId, Provider> = {
@@ -27,7 +41,9 @@ export const providers: Record<ProviderId, Provider> = {
     id: 'claude',
     name: 'Claude',
     ensureInstalled: ensureClaudeInstalled,
+    fastStatus: getClaudeFastStatus,
     status: getClaudeStatus,
+    update: updateClaude,
     login: loginClaude,
     logout: async () => {},
     runPrompt: runClaudePrompt,
@@ -36,16 +52,30 @@ export const providers: Record<ProviderId, Provider> = {
     id: 'codex',
     name: 'Codex',
     ensureInstalled: ensureCodexInstalled,
+    fastStatus: getCodexFastStatus,
     status: getCodexStatus,
+    update: updateCodex,
     login: loginCodex,
     logout: async () => {},
     runPrompt: runCodexPrompt,
+  },
+  cursor: {
+    id: 'cursor',
+    name: 'Cursor',
+    ensureInstalled: ensureCursorInstalled,
+    fastStatus: getCursorFastStatus,
+    status: getCursorStatus,
+    update: updateCursor,
+    login: loginCursor,
+    logout: async () => {},
+    runPrompt: runCursorPrompt,
   },
   local: {
     id: 'local',
     name: 'Local',
     ensureInstalled: ensureLocalInstalled,
     status: getLocalStatus,
+    update: updateLocal,
     login: loginLocal,
     logout: async () => {},
     runPrompt: runLocalPrompt,
@@ -55,8 +85,10 @@ export const providers: Record<ProviderId, Provider> = {
 export async function listModels(): Promise<ModelInfo[]> {
   const claudeModels = await listClaudeModels();
   const codexModels = await listCodexModels();
+  const cursorModels = await listCursorModels();
   const base: ModelInfo[] = [
     ...claudeModels,
+    ...cursorModels,
     { id: 'local', provider: 'local', displayName: 'Local Model' },
   ];
   const envModels = process.env.AGENTCONNECT_LOCAL_MODELS;
@@ -95,6 +127,7 @@ export async function listRecentModels(
 
 export function resolveProviderForModel(model: string | undefined): ProviderId {
   const lower = String(model || '').toLowerCase();
+  if (lower.includes('cursor')) return 'cursor';
   if (lower.includes('codex')) return 'codex';
   if (
     lower.startsWith('gpt') ||

@@ -52,6 +52,11 @@ export class AgentConnectConnect extends HTMLElement {
   private readonly loginPending = new Set<ProviderId>();
   private readonly statusCheckInFlight = new Set<ProviderId>();
   private readonly modelsRefreshIntervalMs = 30_000;
+  private readonly updatePending = new Set<ProviderId>();
+  private updateRefreshTimer: ReturnType<typeof setTimeout> | null;
+  private updateRefreshAttempts: number;
+  private readonly updateRefreshDelayMs = 1500;
+  private readonly updateRefreshMaxAttempts = 2;
 
   constructor() {
     super();
@@ -69,6 +74,8 @@ export class AgentConnectConnect extends HTMLElement {
     this.modelsFetchedAt = 0;
     this.elements = null;
     this.loginPollTimer = null;
+    this.updateRefreshTimer = null;
+    this.updateRefreshAttempts = 0;
     this.handleResize = () => {
       if (this.state.view === 'connected' && this.elements?.overlay?.classList.contains('open')) {
         this.positionPopover(true);
@@ -102,6 +109,15 @@ export class AgentConnectConnect extends HTMLElement {
       view: 'connect',
       loginExperience: null,
     };
+  }
+
+  private createInitialProviders(): ProviderInfoWithPending[] {
+    return [
+      { id: 'claude', name: 'Claude', installed: false, loggedIn: false, pending: true },
+      { id: 'codex', name: 'Codex', installed: false, loggedIn: false, pending: true },
+      { id: 'cursor', name: 'Cursor', installed: false, loggedIn: false, pending: true },
+      { id: 'local', name: 'Local', installed: false, loggedIn: false, pending: true },
+    ];
   }
 
   private get storageKey(): string {
@@ -319,6 +335,7 @@ export class AgentConnectConnect extends HTMLElement {
     return [
       { id: 'claude', name: 'Claude', installed: false, loggedIn: false, pending: true },
       { id: 'codex', name: 'Codex', installed: false, loggedIn: false, pending: true },
+      { id: 'cursor', name: 'Cursor', installed: false, loggedIn: false, pending: true },
       { id: 'local', name: 'Local', installed: false, loggedIn: false, pending: true },
     ];
   }
@@ -358,18 +375,48 @@ export class AgentConnectConnect extends HTMLElement {
     }
     try {
       const client = await getClient();
+      let providerIds: ProviderId[] = [];
       if (!this.state.loginExperience) {
         const hello = await client.hello().catch(() => null);
         this.state.loginExperience = hello?.loginExperience ?? null;
+        providerIds = hello?.providers ?? [];
       }
-      const providers = await client.providers.list();
-      this.state.providers = providers;
+      if (!providerIds.length) {
+        providerIds = this.state.providers.map((entry) => entry.id);
+      }
+      if (!providerIds.length) {
+        providerIds = this.createInitialProviders().map((entry) => entry.id);
+      }
+
+      let listProviders: ProviderInfo[] | null = null;
+      try {
+        listProviders = await client.providers.list();
+      } catch {
+        listProviders = null;
+      }
+      const listed = new Map((listProviders || []).map((entry) => [entry.id, entry]));
+      const existing = new Map(this.state.providers.map((entry) => [entry.id, entry]));
+      const initial = new Map(this.createInitialProviders().map((entry) => [entry.id, entry]));
+      this.state.providers = providerIds.map((id) => {
+        const base =
+          listed.get(id) ||
+          existing.get(id) ||
+          initial.get(id) || {
+            id,
+            name: id,
+            installed: false,
+            loggedIn: false,
+          };
+        const pending = !listed.get(id);
+        return { ...base, pending };
+      });
       if (this.state.connected) {
         this.state.selectedProvider = this.state.connected.provider;
         this.state.selectedModel = this.state.connected.model;
       } else if (!this.state.selectedProvider) {
-        this.state.selectedProvider = providers[0]?.id || null;
+        this.state.selectedProvider = providerIds[0] || null;
       }
+      this.renderProviders();
       const shouldRefreshModels =
         !this.state.selectedProvider ||
         this.state.models.length === 0 ||
@@ -396,9 +443,14 @@ export class AgentConnectConnect extends HTMLElement {
       this.renderReasoningEfforts();
       this.updatePopoverTitle();
       this.updateButtonLabel();
+      this.scheduleUpdateRefresh();
       if (this.state.view === 'connected') {
         requestAnimationFrame(() => this.positionPopover());
       }
+      providerIds.forEach((providerId) => {
+        const name = this.state.providers.find((entry) => entry.id === providerId)?.name;
+        this.checkProviderStatus(providerId, name, { silent: true }).catch(() => {});
+      });
     } catch {
       if (!silent) {
         this.setAlert({
@@ -429,33 +481,12 @@ export class AgentConnectConnect extends HTMLElement {
   }
 
   private async pollProviderStatus(): Promise<void> {
-    const client = await getClient();
-    const previous = this.state.providers;
-    const providers = await client.providers.list();
-    this.state.providers = providers;
-    for (const provider of providers) {
-      if (provider.loggedIn) {
-        this.loginPending.delete(provider.id);
-      }
-    }
-    if (this.state.view === 'connected') {
-      this.updatePopoverTitle();
-      this.updateButtonLabel();
-    } else {
-      this.renderProviders();
-      this.updatePopoverTitle();
-      this.updateButtonLabel();
-    }
-
-    const selected = this.state.selectedProvider;
-    if (!selected) return;
-    const before = previous.find((entry) => entry.id === selected);
-    const after = providers.find((entry) => entry.id === selected);
-    if (before && after && !before.loggedIn && after.loggedIn) {
-      await this.refreshModels();
-      this.renderConnectedModels();
-      this.renderReasoningEfforts();
-    }
+    const providerIds = this.state.providers.map((entry) => entry.id);
+    await Promise.all(
+      providerIds.map((providerId) =>
+        this.checkProviderStatus(providerId, undefined, { silent: true })
+      )
+    );
     this.updateLoginPolling();
   }
 
@@ -473,17 +504,26 @@ export class AgentConnectConnect extends HTMLElement {
     }
   }
 
-  private updateProviderEntry(providerId: ProviderId, updates: Partial<ProviderInfo>): void {
+  private updateProviderEntry(
+    providerId: ProviderId,
+    updates: Partial<ProviderInfoWithPending>
+  ): void {
     const index = this.state.providers.findIndex((entry) => entry.id === providerId);
     if (index === -1) return;
     this.state.providers[index] = { ...this.state.providers[index], ...updates };
   }
 
-  private async checkProviderStatus(providerId: ProviderId, providerName?: string): Promise<void> {
+  private async checkProviderStatus(
+    providerId: ProviderId,
+    providerName?: string,
+    options: { silent?: boolean } = {}
+  ): Promise<void> {
     if (this.statusCheckInFlight.has(providerId)) return;
     this.statusCheckInFlight.add(providerId);
     const label = providerName || providerId;
-    this.setStatus(`Checking ${label} status...`);
+    if (!options.silent) {
+      this.setStatus(`Checking ${label} status...`);
+    }
     try {
       const client = await getClient();
       const status = await client.providers.status(providerId);
@@ -491,6 +531,14 @@ export class AgentConnectConnect extends HTMLElement {
         installed: status.installed,
         loggedIn: status.loggedIn,
         version: status.version,
+        pending: false,
+        updateAvailable: status.updateAvailable,
+        latestVersion: status.latestVersion,
+        updateCheckedAt: status.updateCheckedAt,
+        updateSource: status.updateSource,
+        updateCommand: status.updateCommand,
+        updateMessage: status.updateMessage,
+        updateInProgress: status.updateInProgress,
       });
       if (status.loggedIn) {
         this.loginPending.delete(providerId);
@@ -502,6 +550,12 @@ export class AgentConnectConnect extends HTMLElement {
       this.updatePopoverTitle();
       this.updateButtonLabel();
       this.updateLoginPolling();
+      this.scheduleUpdateRefresh();
+    } catch {
+      this.updateProviderEntry(providerId, { pending: false });
+      this.renderProviders();
+      this.updatePopoverTitle();
+      this.updateButtonLabel();
     } finally {
       this.statusCheckInFlight.delete(providerId);
     }
@@ -523,6 +577,13 @@ export class AgentConnectConnect extends HTMLElement {
         installed: status.installed,
         loggedIn: status.loggedIn,
         version: status.version,
+        updateAvailable: status.updateAvailable,
+        latestVersion: status.latestVersion,
+        updateCheckedAt: status.updateCheckedAt,
+        updateSource: status.updateSource,
+        updateCommand: status.updateCommand,
+        updateMessage: status.updateMessage,
+        updateInProgress: status.updateInProgress,
       });
       if (status.loggedIn) {
         this.loginPending.delete(providerId);
@@ -532,6 +593,7 @@ export class AgentConnectConnect extends HTMLElement {
         this.updatePopoverTitle();
         this.updateButtonLabel();
         this.updateLoginPolling();
+        this.scheduleUpdateRefresh();
         return true;
       }
       await new Promise((resolve) => setTimeout(resolve, this.loginPollIntervalMs));
@@ -551,11 +613,36 @@ export class AgentConnectConnect extends HTMLElement {
     this.prefetching = false;
   }
 
+  private scheduleUpdateRefresh(): void {
+    if (this.updateRefreshTimer) return;
+    if (this.updateRefreshAttempts >= this.updateRefreshMaxAttempts) return;
+    const needsUpdateInfo = this.state.providers.some(
+      (provider) => provider.installed && provider.updateCheckedAt === undefined
+    );
+    if (!needsUpdateInfo) return;
+    this.updateRefreshAttempts += 1;
+    this.updateRefreshTimer = setTimeout(() => {
+      this.updateRefreshTimer = null;
+      this.refresh({ silent: true }).catch(() => {});
+    }, this.updateRefreshDelayMs);
+  }
+
   private async prefetchAllProviderModels(): Promise<void> {
     if (!this.state.providers.length) return;
     const client = await getClient();
     await Promise.allSettled(
-      this.state.providers.map((provider) => client.models.list(provider.id))
+      this.state.providers.map((provider) => {
+        const key = `agentconnect:models-prefetch:${provider.id}`;
+        if (localStorage.getItem(key) === '1') {
+          return Promise.resolve();
+        }
+        try {
+          localStorage.setItem(key, '1');
+        } catch {
+          // ignore
+        }
+        return client.models.list(provider.id);
+      })
     );
   }
 
@@ -651,15 +738,26 @@ export class AgentConnectConnect extends HTMLElement {
 
     const textWrap = document.createElement('div');
 
+    const nameRow = document.createElement('div');
+    nameRow.className = 'ac-provider-name-row';
+
     const name = document.createElement('div');
     name.className = 'ac-provider-name';
     name.textContent = provider.name || provider.id;
+    nameRow.appendChild(name);
+
+    if (provider.updateAvailable && !this.isUpdatingProvider(provider)) {
+      const updateBadge = document.createElement('span');
+      updateBadge.className = 'ac-provider-update';
+      updateBadge.textContent = 'Update available';
+      nameRow.appendChild(updateBadge);
+    }
 
     const status = document.createElement('div');
     status.className = 'ac-provider-status';
     status.textContent = statusText;
 
-    textWrap.append(name, status);
+    textWrap.append(nameRow, status);
     meta.append(icon, textWrap);
     row.appendChild(meta);
     card.appendChild(row);
@@ -667,12 +765,14 @@ export class AgentConnectConnect extends HTMLElement {
       this.handleProviderSelect(provider);
     });
 
-    const action = this.buildProviderAction(provider);
-    if (action) {
-      const actions = document.createElement('div');
-      actions.className = 'ac-provider-actions';
-      actions.appendChild(action);
-      card.appendChild(actions);
+    const actions = this.buildProviderActions(provider);
+    if (actions.length) {
+      const actionsEl = document.createElement('div');
+      actionsEl.className = 'ac-provider-actions';
+      for (const action of actions) {
+        actionsEl.appendChild(action);
+      }
+      card.appendChild(actionsEl);
     }
 
     return card;
@@ -683,7 +783,9 @@ export class AgentConnectConnect extends HTMLElement {
     const isLocal = provider.id === 'local';
     const hasLocalConfig = this.hasLocalConfig();
     const isConnected = this.state.connected?.provider === provider.id;
+    const updating = this.isUpdatingProvider(provider);
     if (pending) return 'Checking...';
+    if (updating) return 'Updating...';
     if (isLocal) {
       if (!hasLocalConfig) return 'Needs setup';
       return provider.installed ? 'Configured' : 'Offline';
@@ -695,20 +797,37 @@ export class AgentConnectConnect extends HTMLElement {
     return 'Detected';
   }
 
-  private buildProviderAction(provider: ProviderInfoWithPending): HTMLButtonElement | null {
+  private isUpdatingProvider(provider: ProviderInfoWithPending): boolean {
+    return Boolean(provider.updateInProgress || this.updatePending.has(provider.id));
+  }
+
+  private buildProviderActions(provider: ProviderInfoWithPending): HTMLButtonElement[] {
+    const actions: HTMLButtonElement[] = [];
     const pending = provider.pending === true;
     const isLocal = provider.id === 'local';
     const hasLocalConfig = this.hasLocalConfig();
     const isConnected = this.state.connected?.provider === provider.id;
     const terminalLogin = provider.id === 'claude' && this.state.loginExperience === 'terminal';
+    const updating = this.isUpdatingProvider(provider);
 
     if (pending) {
-      return this.buildActionButton('Checking...', true);
+      actions.push(this.buildActionButton('Checking...', true));
+      return actions;
+    }
+    if (updating) {
+      actions.push(this.buildUpdateButton(provider, true));
+      return actions;
     }
     if (isLocal) {
-      return this.buildActionButton(hasLocalConfig ? 'Edit' : 'Configure', false, () =>
-        this.openLocalConfig()
+      actions.push(
+        this.buildActionButton(hasLocalConfig ? 'Edit' : 'Configure', false, () =>
+          this.openLocalConfig()
+        )
       );
+      return actions;
+    }
+    if (provider.updateAvailable) {
+      actions.push(this.buildUpdateButton(provider, false));
     }
     if (!provider.installed) {
       const label = terminalLogin ? 'Install + Run /login' : 'Install + Login';
@@ -716,14 +835,16 @@ export class AgentConnectConnect extends HTMLElement {
       if (terminalLogin) {
         button.title = 'Opens a terminal and runs claude login';
       }
-      return button;
+      actions.push(button);
+      return actions;
     }
     if (this.loginPending.has(provider.id)) {
       const button = this.buildActionButton('Waiting for login...', false, () =>
         this.checkProviderStatus(provider.id, provider.name)
       );
       button.title = `Click to check ${provider.name || provider.id} login status`;
-      return button;
+      actions.push(button);
+      return actions;
     }
     if (!provider.loggedIn) {
       const label = terminalLogin ? 'Run /login' : 'Login';
@@ -731,20 +852,22 @@ export class AgentConnectConnect extends HTMLElement {
       if (terminalLogin) {
         button.title = 'Opens a terminal and runs claude login';
       }
-      return button;
+      actions.push(button);
+      return actions;
     }
-    if (isConnected) return null;
-    return null;
+    if (isConnected) return actions;
+    return actions;
   }
 
   private buildActionButton(
     label: string,
     disabled: boolean,
     onClick?: () => void,
-    loading = false
+    loading = false,
+    variant: 'secondary' | 'update' = 'secondary'
   ): HTMLButtonElement {
     const button = document.createElement('button');
-    button.className = 'ac-button secondary';
+    button.className = `ac-button ${variant}`;
     if (loading) {
       button.classList.add('loading');
     }
@@ -759,9 +882,35 @@ export class AgentConnectConnect extends HTMLElement {
     return button;
   }
 
+  private buildUpdateButton(provider: ProviderInfoWithPending, loading: boolean): HTMLButtonElement {
+    const updateButton = document.createElement('button');
+    updateButton.className = 'ac-button update icon';
+    updateButton.type = 'button';
+    updateButton.setAttribute('aria-label', `Update ${provider.name || provider.id}`);
+    updateButton.title = provider.updateMessage || 'Update available';
+    if (loading) {
+      updateButton.classList.add('loading');
+      updateButton.disabled = true;
+    }
+    updateButton.innerHTML = `
+      <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+        <path d="M12 3a1 1 0 0 1 1 1v8.17l2.59-2.58a1 1 0 1 1 1.41 1.42l-4.3 4.29a1 1 0 0 1-1.42 0l-4.3-4.29a1 1 0 0 1 1.41-1.42L11 12.17V4a1 1 0 0 1 1-1z" />
+        <path d="M5 19a1 1 0 0 1-1-1v-2a1 1 0 1 1 2 0v1h12v-1a1 1 0 1 1 2 0v2a1 1 0 0 1-1 1H5z" />
+      </svg>
+    `;
+    if (!loading) {
+      updateButton.addEventListener('click', (event) => {
+        event.stopPropagation();
+        this.updateProvider(provider);
+      });
+    }
+    return updateButton;
+  }
+
   private async handleProviderSelect(provider: ProviderInfoWithPending): Promise<void> {
     if (this.busy) return;
     if (provider.pending) return;
+    if (this.isUpdatingProvider(provider)) return;
     if (provider.id === 'local') {
       this.openLocalConfig();
       return;
@@ -799,6 +948,27 @@ export class AgentConnectConnect extends HTMLElement {
     } finally {
       this.setBusy(false);
       this.setProviderLoading(provider.id, false);
+    }
+  }
+
+  private async updateProvider(provider: ProviderInfo): Promise<void> {
+    if (this.updatePending.has(provider.id)) return;
+    this.updatePending.add(provider.id);
+    this.renderProviders();
+    try {
+      const client = await getClient();
+      await client.providers.update(provider.id);
+      await this.refresh({ silent: true });
+    } catch (err: unknown) {
+      this.setAlert({
+        title: 'Update failed',
+        message: err instanceof Error ? err.message : 'Could not update provider.',
+        action: 'Retry',
+        onAction: () => this.updateProvider(provider),
+      });
+    } finally {
+      this.updatePending.delete(provider.id);
+      this.renderProviders();
     }
   }
 
