@@ -37,7 +37,6 @@ const DEFAULT_LOGIN = '';
 const DEFAULT_STATUS = '';
 const CLAUDE_MODELS_CACHE_TTL_MS = 60_000;
 const CLAUDE_RECENT_MODELS_CACHE_TTL_MS = 60_000;
-const CLAUDE_UPDATE_COMMAND = 'claude update';
 const CLAUDE_UPDATE_CACHE_TTL_MS = 6 * 60 * 60 * 1000;
 let claudeModelsCache: ModelInfo[] | null = null;
 let claudeModelsCacheAt = 0;
@@ -694,34 +693,6 @@ async function checkClaudeCliStatus(): Promise<ClaudeCliLoginStatus> {
     });
 
   return claudeLoginPromise!;
-}
-
-function parseUpdateOutput(output: string): {
-  updateAvailable?: boolean;
-  updateMessage?: string;
-} {
-  const text = output.toLowerCase();
-  const message = output.trim() || undefined;
-  if (
-    text.includes('already up to date') ||
-    text.includes('already up-to-date') ||
-    text.includes('up to date') ||
-    text.includes('up-to-date') ||
-    text.includes('no updates')
-  ) {
-    return { updateAvailable: false, updateMessage: message };
-  }
-  if (
-    text.includes('update available') ||
-    text.includes('new version') ||
-    text.includes('update found')
-  ) {
-    return { updateAvailable: true, updateMessage: message };
-  }
-  if (text.includes('updated') || text.includes('upgraded') || text.includes('installing')) {
-    return { updateAvailable: false, updateMessage: message };
-  }
-  return { updateAvailable: undefined, updateMessage: message };
 }
 
 function getClaudeUpdateSnapshot(commandPath: string | null): {

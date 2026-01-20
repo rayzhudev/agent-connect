@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## 0.1.7
+
+- Fix lint failures in provider code and modal-only app.
+- Stabilize Cursor fast status to avoid login/detected flicker.
+
 ## 0.1.6
 
 - Add fast provider status checks with background refresh for faster initial UI.

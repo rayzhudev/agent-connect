@@ -28,7 +28,6 @@ const DEFAULT_LOGIN = 'cursor-agent login';
 const DEFAULT_STATUS = 'cursor-agent status';
 const CURSOR_MODELS_COMMAND = 'cursor-agent models';
 const CURSOR_MODELS_CACHE_TTL_MS = 60_000;
-const CURSOR_UPDATE_COMMAND = 'cursor-agent update';
 const CURSOR_UPDATE_CACHE_TTL_MS = 6 * 60 * 60 * 1000;
 let cursorModelsCache: ModelInfo[] | null = null;
 let cursorModelsCacheAt = 0;
@@ -299,35 +298,6 @@ function normalizeCursorStatusOutput(output: string): boolean | null {
     return true;
   }
   return null;
-}
-
-function parseUpdateOutput(output: string): {
-  updateAvailable?: boolean;
-  latestVersion?: string;
-  updateMessage?: string;
-} {
-  const text = output.toLowerCase();
-  const message = output.trim() || undefined;
-  if (
-    text.includes('already up to date') ||
-    text.includes('already up-to-date') ||
-    text.includes('up to date') ||
-    text.includes('up-to-date') ||
-    text.includes('no updates')
-  ) {
-    return { updateAvailable: false, updateMessage: message };
-  }
-  if (
-    text.includes('update available') ||
-    text.includes('new version') ||
-    text.includes('update found')
-  ) {
-    return { updateAvailable: true, updateMessage: message };
-  }
-  if (text.includes('updated') || text.includes('upgraded') || text.includes('installing')) {
-    return { updateAvailable: false, updateMessage: message };
-  }
-  return { updateAvailable: undefined, updateMessage: message };
 }
 
 function getCursorUpdateSnapshot(commandPath: string | null): {
@@ -750,12 +720,6 @@ function extractErrorMessage(ev: CursorEvent): string | null {
   return null;
 }
 
-function normalizeCursorEvent(raw: CursorEvent): Record<string, unknown> {
-  if (!raw || typeof raw !== 'object') return { type: 'unknown' };
-  const type = typeof raw.type === 'string' ? raw.type : 'unknown';
-  return { ...raw, type };
-}
-
 export function runCursorPrompt({
   prompt,
   resumeSessionId,
@@ -862,7 +826,6 @@ export function runCursorPrompt({
     };
 
     const handleEvent = (ev: CursorEvent): void => {
-      const normalized = normalizeCursorEvent(ev);
       if (ev?.type === 'system' && ev?.subtype === 'init') {
         debugLog('Cursor', 'init', {
           apiKeySource: ev.apiKeySource || null,
