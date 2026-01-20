@@ -881,6 +881,13 @@ export async function getClaudeStatus(): Promise<ProviderStatus> {
   return { installed, loggedIn, version: versionCheck.version || undefined, ...updateInfo };
 }
 
+export async function getClaudeFastStatus(): Promise<ProviderStatus> {
+  const command = getClaudeCommand();
+  const installed = commandExists(command);
+  const loggedIn = installed ? await hasClaudeAuth() : false;
+  return { installed, loggedIn };
+}
+
 export async function updateClaude(): Promise<ProviderStatus> {
   const command = getClaudeCommand();
   if (!commandExists(command)) {

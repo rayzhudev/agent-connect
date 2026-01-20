@@ -465,6 +465,15 @@ export async function getCursorStatus(): Promise<ProviderStatus> {
   return { installed, loggedIn, version: versionCheck.version || undefined, ...updateInfo };
 }
 
+export async function getCursorFastStatus(): Promise<ProviderStatus> {
+  const command = getCursorCommand();
+  const installed = commandExists(command);
+  if (!installed) {
+    return { installed: false, loggedIn: false };
+  }
+  return { installed: true, loggedIn: true };
+}
+
 export async function updateCursor(): Promise<ProviderStatus> {
   const command = getCursorCommand();
   if (!commandExists(command)) {

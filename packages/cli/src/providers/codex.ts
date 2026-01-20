@@ -403,6 +403,13 @@ export async function getCodexStatus(): Promise<ProviderStatus> {
   return { installed, loggedIn, version: versionCheck.version || undefined, ...updateInfo };
 }
 
+export async function getCodexFastStatus(): Promise<ProviderStatus> {
+  const command = getCodexCommand();
+  const loggedIn = await hasCodexAuth();
+  const installed = commandExists(command) || loggedIn;
+  return { installed, loggedIn };
+}
+
 export async function updateCodex(): Promise<ProviderStatus> {
   const command = getCodexCommand();
   if (!commandExists(command)) {

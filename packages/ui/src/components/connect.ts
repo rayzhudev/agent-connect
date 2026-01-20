@@ -388,10 +388,18 @@ export class AgentConnectConnect extends HTMLElement {
         providerIds = this.createInitialProviders().map((entry) => entry.id);
       }
 
+      let listProviders: ProviderInfo[] | null = null;
+      try {
+        listProviders = await client.providers.list();
+      } catch {
+        listProviders = null;
+      }
+      const listed = new Map((listProviders || []).map((entry) => [entry.id, entry]));
       const existing = new Map(this.state.providers.map((entry) => [entry.id, entry]));
       const initial = new Map(this.createInitialProviders().map((entry) => [entry.id, entry]));
       this.state.providers = providerIds.map((id) => {
         const base =
+          listed.get(id) ||
           existing.get(id) ||
           initial.get(id) || {
             id,
@@ -399,7 +407,8 @@ export class AgentConnectConnect extends HTMLElement {
             installed: false,
             loggedIn: false,
           };
-        return { ...base, pending: true };
+        const pending = !listed.get(id);
+        return { ...base, pending };
       });
       if (this.state.connected) {
         this.state.selectedProvider = this.state.connected.provider;

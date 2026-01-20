@@ -222,6 +222,7 @@ export interface Provider {
   id: ProviderId;
   name: string;
   ensureInstalled(): Promise<InstallResult>;
+  fastStatus?(): Promise<ProviderStatus>;
   status(): Promise<ProviderStatus>;
   update(): Promise<ProviderStatus>;
   login(options?: ProviderLoginOptions): Promise<{ loggedIn: boolean }>;

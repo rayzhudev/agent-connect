@@ -1,6 +1,7 @@
 import type { Provider, ProviderId, ModelInfo } from '../types.js';
 import {
   ensureClaudeInstalled,
+  getClaudeFastStatus,
   getClaudeStatus,
   listClaudeModels,
   listClaudeRecentModels,
@@ -10,6 +11,7 @@ import {
 } from './claude.js';
 import {
   ensureCodexInstalled,
+  getCodexFastStatus,
   getCodexStatus,
   listCodexModels,
   loginCodex,
@@ -18,6 +20,7 @@ import {
 } from './codex.js';
 import {
   ensureCursorInstalled,
+  getCursorFastStatus,
   getCursorStatus,
   listCursorModels,
   loginCursor,
@@ -38,6 +41,7 @@ export const providers: Record<ProviderId, Provider> = {
     id: 'claude',
     name: 'Claude',
     ensureInstalled: ensureClaudeInstalled,
+    fastStatus: getClaudeFastStatus,
     status: getClaudeStatus,
     update: updateClaude,
     login: loginClaude,
@@ -48,6 +52,7 @@ export const providers: Record<ProviderId, Provider> = {
     id: 'codex',
     name: 'Codex',
     ensureInstalled: ensureCodexInstalled,
+    fastStatus: getCodexFastStatus,
     status: getCodexStatus,
     update: updateCodex,
     login: loginCodex,
@@ -58,6 +63,7 @@ export const providers: Record<ProviderId, Provider> = {
     id: 'cursor',
     name: 'Cursor',
     ensureInstalled: ensureCursorInstalled,
+    fastStatus: getCursorFastStatus,
     status: getCursorStatus,
     update: updateCursor,
     login: loginCursor,

@@ -185,7 +185,8 @@ export function startDevHost({
   }
 
   async function getCachedStatus(
-    provider: (typeof providers)[ProviderId]
+    provider: (typeof providers)[ProviderId],
+    options: { allowFast?: boolean } = {}
   ): Promise<ProviderStatus> {
     const cached = statusCache.get(provider.id);
     const now = Date.now();
@@ -194,6 +195,30 @@ export function startDevHost({
     }
     const existing = statusInFlight.get(provider.id);
     if (existing) return existing;
+    if (options.allowFast && provider.fastStatus) {
+      try {
+        const fast = await provider.fastStatus();
+        const startedAt = Date.now();
+        const promise = provider
+          .status()
+          .then((status) => {
+            debugLog('Providers', 'status-check', {
+              providerId: provider.id,
+              durationMs: Date.now() - startedAt,
+              completedAt: new Date().toISOString(),
+            });
+            statusCache.set(provider.id, { status, at: Date.now() });
+            return status;
+          })
+          .finally(() => {
+            statusInFlight.delete(provider.id);
+          });
+        statusInFlight.set(provider.id, promise);
+        return fast;
+      } catch {
+        // fall through to full status
+      }
+    }
     const startedAt = Date.now();
     const promise = provider
       .status()
@@ -261,7 +286,7 @@ export function startDevHost({
         const statusEntries = await Promise.all(
           Object.values(providers).map(async (provider) => {
             try {
-              return [provider.id, await getCachedStatus(provider)] as const;
+              return [provider.id, await getCachedStatus(provider, { allowFast: true })] as const;
             } catch {
               return [provider.id, { installed: false, loggedIn: false }] as const;
             }
@@ -283,7 +308,7 @@ export function startDevHost({
           replyError(socket, id, 'AC_ERR_UNSUPPORTED', 'Unknown provider');
           return;
         }
-        const status = await getCachedStatus(provider);
+        const status = await getCachedStatus(provider, { allowFast: true });
         reply(socket, id, {
           provider: {
             id: provider.id,
