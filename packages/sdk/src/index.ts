@@ -51,6 +51,7 @@ export type SessionEvent =
   | {
       type: 'final';
       text: string;
+      cancelled?: boolean;
       providerSessionId?: string | null;
       providerDetail?: ProviderDetail;
     }
@@ -67,7 +68,13 @@ export type SessionEvent =
       providerSessionId?: string | null;
       providerDetail?: ProviderDetail;
     }
-  | { type: 'error'; message: string; providerSessionId?: string | null; providerDetail?: ProviderDetail }
+  | {
+      type: 'error';
+      message: string;
+      cancelled?: boolean;
+      providerSessionId?: string | null;
+      providerDetail?: ProviderDetail;
+    }
   | {
       type: 'raw_line';
       line: string;
@@ -127,7 +134,8 @@ export type AgentConnectConnectOptions = {
 };
 
 export type SessionCreateOptions = {
-  model: string;
+  model?: string;
+  provider?: ProviderId;
   reasoningEffort?: string;
   system?: string;
   metadata?: Record<string, unknown>;
@@ -180,7 +188,7 @@ export interface AgentConnectClient {
 
   providers: {
     list(): Promise<ProviderInfo[]>;
-    status(provider: ProviderId): Promise<ProviderInfo>;
+    status(provider: ProviderId, options?: { fast?: boolean; force?: boolean }): Promise<ProviderInfo>;
     ensureInstalled(provider: ProviderId): Promise<InstallResult>;
     update(provider: ProviderId): Promise<ProviderInfo>;
     login(provider: ProviderId, options?: ProviderLoginOptions): Promise<{ loggedIn: boolean }>;
@@ -583,6 +591,7 @@ class AgentConnectClientImpl implements AgentConnectClient {
       return {
         type: 'final',
         text: String(data?.text ?? ''),
+        cancelled: typeof data?.cancelled === 'boolean' ? data.cancelled : undefined,
         providerSessionId,
         ...(providerDetail && { providerDetail }),
       };
@@ -610,6 +619,7 @@ class AgentConnectClientImpl implements AgentConnectClient {
       return {
         type: 'error',
         message: String(data?.message ?? 'Unknown error'),
+        cancelled: typeof data?.cancelled === 'boolean' ? data.cancelled : undefined,
         providerSessionId,
         ...(providerDetail && { providerDetail }),
       };
@@ -725,8 +735,11 @@ class AgentConnectClientImpl implements AgentConnectClient {
       const res = (await this.request('acp.providers.list')) as { providers: ProviderInfo[] };
       return res.providers ?? [];
     },
-    status: async (provider: ProviderId): Promise<ProviderInfo> => {
-      const res = (await this.request('acp.providers.status', { provider })) as {
+    status: async (
+      provider: ProviderId,
+      options?: { fast?: boolean; force?: boolean }
+    ): Promise<ProviderInfo> => {
+      const res = (await this.request('acp.providers.status', { provider, options })) as {
         provider: ProviderInfo;
       };
       return res.provider;

@@ -192,6 +192,7 @@ export interface SessionEvent {
   input?: unknown;
   output?: unknown;
   timestampMs?: number;
+  cancelled?: boolean;
 }
 
 export interface RunPromptOptions {
@@ -235,7 +236,7 @@ export interface Provider {
 export interface SessionState {
   id: string;
   providerId: ProviderId;
-  model: string;
+  model: string | null;
   providerSessionId: string | null;
   reasoningEffort: string | null;
   cwd?: string;

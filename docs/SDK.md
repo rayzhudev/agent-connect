@@ -116,7 +116,7 @@ export type ProviderInfo = {
   updateAvailable?: boolean;
   latestVersion?: string;
   updateCheckedAt?: number;
-  updateSource?: 'cli' | 'npm' | 'unknown';
+  updateSource?: 'cli' | 'npm' | 'bun' | 'brew' | 'winget' | 'script' | 'unknown';
   updateCommand?: string;
   updateMessage?: string;
   updateInProgress?: boolean;
@@ -148,10 +148,10 @@ export type ProviderLoginOptions = {
 
 export type SessionEvent =
   | { type: 'delta'; text: string; providerSessionId?: string | null; providerDetail?: ProviderDetail }
-  | { type: 'final'; text: string; providerSessionId?: string | null; providerDetail?: ProviderDetail }
+  | { type: 'final'; text: string; cancelled?: boolean; providerSessionId?: string | null; providerDetail?: ProviderDetail }
   | { type: 'usage'; usage: Record<string, number>; providerSessionId?: string | null; providerDetail?: ProviderDetail }
   | { type: 'status'; status: 'thinking' | 'idle' | 'error'; error?: string; providerSessionId?: string | null; providerDetail?: ProviderDetail }
-  | { type: 'error'; message: string; providerSessionId?: string | null; providerDetail?: ProviderDetail }
+  | { type: 'error'; message: string; cancelled?: boolean; providerSessionId?: string | null; providerDetail?: ProviderDetail }
   | { type: 'raw_line'; line: string; providerSessionId?: string | null; providerDetail?: ProviderDetail }
   | { type: 'message'; provider?: ProviderId; role: 'system' | 'user' | 'assistant'; content: string; contentParts?: unknown; providerSessionId?: string | null; providerDetail?: ProviderDetail }
   | { type: 'thinking'; provider?: ProviderId; phase: 'delta' | 'start' | 'completed' | 'error'; text?: string; timestampMs?: number; providerSessionId?: string | null; providerDetail?: ProviderDetail }
@@ -165,7 +165,8 @@ export type ProviderDetail = {
 };
 
 export type SessionCreateOptions = {
-  model: string;
+  model?: string;
+  provider?: ProviderId;
   reasoningEffort?: string;
   system?: string;
   metadata?: Record<string, unknown>;
@@ -221,7 +222,7 @@ export interface AgentConnectClient {
 
   providers: {
     list(): Promise<ProviderInfo[]>;
-    status(provider: ProviderId): Promise<ProviderInfo>;
+    status(provider: ProviderId, options?: { fast?: boolean; force?: boolean }): Promise<ProviderInfo>;
     ensureInstalled(provider: ProviderId): Promise<InstallResult>;
     update(provider: ProviderId): Promise<ProviderInfo>;
     login(provider: ProviderId, options?: ProviderLoginOptions): Promise<{ loggedIn: boolean }>;

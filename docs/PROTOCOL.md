@@ -330,6 +330,22 @@ Model selection:
 - Apps can use `local` (fallback), `local:<id>`, or `local/<id>` to pin a specific model.
 - The host resolves the model ID and sends it in the OpenAI-compatible request.
 
+## Session semantics
+
+- `acp.sessions.create` may include `provider` to explicitly bind a provider for the session.
+  - If `provider` is set, it is immutable for that session.
+  - If `provider` is set and `model` is omitted, the host selects a default model (recent if available).
+- `acp.sessions.resume` requires an existing session; it does not create a new one.
+- `acp.sessions.cancel` stops the in-flight run (session remains open) and emits a terminal event with
+  `cancelled: true` (`final` preferred, or `error`).
+- `acp.providers.status` accepts `options.fast` and `options.force` to control cache usage.
+
+## Usage event semantics
+
+- A single run should emit usage once per turn.
+- If `usage` is emitted as a separate event, message events must not include usage fields.
+- If usage is only available at end, it may be included on `final` as `usage`.
+
 ## SDK Surface
 
 Minimal client API (TypeScript):
@@ -356,7 +372,7 @@ export type ProviderInfo = {
   updateAvailable?: boolean;
   latestVersion?: string;
   updateCheckedAt?: number;
-  updateSource?: 'cli' | 'npm' | 'unknown';
+  updateSource?: 'cli' | 'npm' | 'bun' | 'brew' | 'winget' | 'script' | 'unknown';
   updateCommand?: string;
   updateMessage?: string;
   updateInProgress?: boolean;
@@ -379,10 +395,10 @@ export type ModelInfo = {
 
 export type SessionEvent =
   | { type: 'delta'; text: string; providerSessionId?: string | null; providerDetail?: ProviderDetail }
-  | { type: 'final'; text: string; providerSessionId?: string | null; providerDetail?: ProviderDetail }
+  | { type: 'final'; text: string; cancelled?: boolean; providerSessionId?: string | null; providerDetail?: ProviderDetail }
   | { type: 'usage'; usage: Record<string, number>; providerSessionId?: string | null; providerDetail?: ProviderDetail }
   | { type: 'status'; status: 'thinking' | 'idle' | 'error'; error?: string; providerSessionId?: string | null; providerDetail?: ProviderDetail }
-  | { type: 'error'; message: string; providerSessionId?: string | null; providerDetail?: ProviderDetail }
+  | { type: 'error'; message: string; cancelled?: boolean; providerSessionId?: string | null; providerDetail?: ProviderDetail }
   | { type: 'raw_line'; line: string; providerSessionId?: string | null; providerDetail?: ProviderDetail }
   | { type: 'message'; provider?: ProviderId; role: 'system' | 'user' | 'assistant'; content: string; contentParts?: unknown; providerSessionId?: string | null; providerDetail?: ProviderDetail }
   | { type: 'thinking'; provider?: ProviderId; phase: 'delta' | 'start' | 'completed' | 'error'; text?: string; timestampMs?: number; providerSessionId?: string | null; providerDetail?: ProviderDetail }
@@ -400,6 +416,8 @@ export type ProviderLoginOptions = {
   apiKey?: string;
   model?: string;
   models?: string[];
+  loginMethod?: 'claudeai' | 'console';
+  loginExperience?: 'embedded' | 'terminal';
 };
 
 export type AgentConnectConnectOptions = {
@@ -409,7 +427,8 @@ export type AgentConnectConnectOptions = {
 };
 
 export type SessionCreateOptions = {
-  model: string;
+  model?: string;
+  provider?: ProviderId;
   reasoningEffort?: string;
   system?: string;
   metadata?: Record<string, unknown>;
@@ -458,7 +477,7 @@ export interface AgentConnectClient {
 
   providers: {
     list(): Promise<ProviderInfo[]>;
-    status(provider: ProviderId): Promise<ProviderInfo>;
+    status(provider: ProviderId, options?: { fast?: boolean; force?: boolean }): Promise<ProviderInfo>;
     ensureInstalled(provider: ProviderId): Promise<{ installed: boolean; version?: string }>;
     login(provider: ProviderId, options?: ProviderLoginOptions): Promise<{ loggedIn: boolean }>;
     logout(provider: ProviderId): Promise<{ loggedIn: boolean }>;

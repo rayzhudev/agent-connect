@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## 0.2.1
+
+- Add provider binding and deterministic cancel semantics for embedded hosts.
+- Add status check options (`fast`/`force`) and align protocol/schema/docs for host changes.
+- Improve embedded dev host bootstrapping in example apps (wait for readiness, avoid conflicts).
+
 ## 0.2.0
 
 - Add new `@agentconnect/host` package for embedded hosting and shared provider runtime.

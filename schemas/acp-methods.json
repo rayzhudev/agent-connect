@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://agentconnect.dev/schemas/acp-methods.json",
   "$defs": {
-    "ProviderId": { "type": "string", "enum": ["claude", "codex", "local"] },
+    "ProviderId": { "type": "string", "enum": ["claude", "codex", "cursor", "local"] },
     "ModelId": { "type": "string", "minLength": 1 },
     "SessionId": { "type": "string", "minLength": 1 },
     "ProviderInfo": {
@@ -13,7 +13,14 @@
         "name": { "type": "string" },
         "installed": { "type": "boolean" },
         "loggedIn": { "type": "boolean" },
-        "version": { "type": "string" }
+        "version": { "type": "string" },
+        "updateAvailable": { "type": "boolean" },
+        "latestVersion": { "type": "string" },
+        "updateCheckedAt": { "type": "integer" },
+        "updateSource": { "type": "string" },
+        "updateCommand": { "type": "string" },
+        "updateMessage": { "type": "string" },
+        "updateInProgress": { "type": "boolean" }
       },
       "additionalProperties": false
     },
@@ -94,7 +101,17 @@
     "ProviderStatusParams": {
       "type": "object",
       "required": ["provider"],
-      "properties": { "provider": { "$ref": "#/$defs/ProviderId" } },
+      "properties": {
+        "provider": { "$ref": "#/$defs/ProviderId" },
+        "options": {
+          "type": "object",
+          "properties": {
+            "fast": { "type": "boolean" },
+            "force": { "type": "boolean" }
+          },
+          "additionalProperties": false
+        }
+      },
       "additionalProperties": false
     },
     "ProviderStatusResult": {
@@ -129,7 +146,9 @@
             "baseUrl": { "type": "string" },
             "apiKey": { "type": "string" },
             "model": { "type": "string" },
-            "models": { "type": "array", "items": { "type": "string" } }
+            "models": { "type": "array", "items": { "type": "string" } },
+            "loginMethod": { "type": "string" },
+            "loginExperience": { "type": "string" }
           },
           "additionalProperties": false
         }
@@ -182,9 +201,9 @@
     },
     "SessionCreateParams": {
       "type": "object",
-      "required": ["model"],
       "properties": {
         "model": { "$ref": "#/$defs/ModelId" },
+        "provider": { "$ref": "#/$defs/ProviderId" },
         "reasoningEffort": { "type": "string" },
         "system": { "type": "string" },
         "metadata": { "type": "object" },
@@ -192,8 +211,10 @@
         "repoRoot": { "type": "string" },
         "temperature": { "type": "number", "minimum": 0, "maximum": 2 },
         "maxTokens": { "type": "integer", "minimum": 1 },
-        "topP": { "type": "number", "minimum": 0, "maximum": 1 }
+        "topP": { "type": "number", "minimum": 0, "maximum": 1 },
+        "providerDetailLevel": { "type": "string", "enum": ["minimal", "raw"] }
       },
+      "anyOf": [{ "required": ["model"] }, { "required": ["provider"] }],
       "additionalProperties": false
     },
     "SessionCreateResult": {
@@ -211,7 +232,8 @@
         "reasoningEffort": { "type": "string" },
         "providerSessionId": { "type": "string" },
         "cwd": { "type": "string" },
-        "repoRoot": { "type": "string" }
+        "repoRoot": { "type": "string" },
+        "providerDetailLevel": { "type": "string", "enum": ["minimal", "raw"] }
       },
       "additionalProperties": false
     },
@@ -237,7 +259,8 @@
         },
         "metadata": { "type": "object" },
         "cwd": { "type": "string" },
-        "repoRoot": { "type": "string" }
+        "repoRoot": { "type": "string" },
+        "providerDetailLevel": { "type": "string", "enum": ["minimal", "raw"] }
       },
       "additionalProperties": false
     },

@@ -85,6 +85,12 @@ type HostRuntime = {
   flush: () => void;
 };
 
+type ActiveRun = {
+  controller: AbortController;
+  emit: RpcResponder['emit'];
+  token: string;
+};
+
 function send(socket: WebSocket, payload: object): void {
   socket.send(JSON.stringify(payload));
 }
@@ -135,7 +141,7 @@ function createHostRuntime(options: HostRuntimeOptions): HostRuntime {
   });
 
   const sessions = new Map<string, SessionState>();
-  const activeRuns = new Map<string, AbortController>();
+  const activeRuns = new Map<string, ActiveRun>();
   const updatingProviders = new Map<ProviderId, Promise<ProviderStatus>>();
   const processTable = new Map<number, ChildProcess>();
   const backendState = new Map<string, BackendState>();
@@ -213,17 +219,25 @@ function createHostRuntime(options: HostRuntimeOptions): HostRuntime {
     recordCapability(`model.${providerId}`);
   }
 
+  function recordProviderCapability(providerId: ProviderId): void {
+    recordCapability(`model.${providerId}`);
+  }
+
   async function getCachedStatus(
     provider: (typeof providers)[ProviderId],
-    options: { allowFast?: boolean } = {}
+    options: { allowFast?: boolean; force?: boolean } = {}
   ): Promise<ProviderStatus> {
+    if (options.force) {
+      statusCache.delete(provider.id);
+      statusInFlight.delete(provider.id);
+    }
     const cached = statusCache.get(provider.id);
     const now = Date.now();
-    if (cached && now - cached.at < statusCacheTtlMs) {
+    if (!options.force && cached && now - cached.at < statusCacheTtlMs) {
       return cached.status;
     }
     const existing = statusInFlight.get(provider.id);
-    if (existing) return existing;
+    if (!options.force && existing) return existing;
     if (options.allowFast && provider.fastStatus) {
       try {
         const fast = await provider.fastStatus();
@@ -267,13 +281,44 @@ function createHostRuntime(options: HostRuntimeOptions): HostRuntime {
     return promise;
   }
 
+  async function isModelForProvider(model: string, providerId: ProviderId): Promise<boolean> {
+    try {
+      const models = await listModels();
+      if (!models.length) return true;
+      const match = models.find((entry) => entry.id === model);
+      if (match) return match.provider === providerId;
+    } catch {
+      return true;
+    }
+    return resolveProviderForModel(model) === providerId;
+  }
+
+  async function pickDefaultModel(providerId: ProviderId): Promise<string | null> {
+    try {
+      const recent = await listRecentModels(providerId);
+      if (recent.length > 0) return recent[0].id;
+    } catch {
+      // ignore recent model lookup failures
+    }
+    try {
+      const models = await listModels();
+      const match = models.find((entry) => entry.provider === providerId);
+      if (match) return match.id;
+    } catch {
+      // ignore model lookup failures
+    }
+    if (providerId === 'claude') return 'default';
+    if (providerId === 'local') return 'local';
+    return null;
+  }
+
   function invalidateStatus(providerId: ProviderId): void {
     if (!providerId) return;
     statusCache.delete(providerId);
   }
 
   function emitSessionEvent(
-    responder: RpcResponder,
+    emit: RpcResponder['emit'],
     sessionId: string,
     type: string,
     data: Record<string, unknown>
@@ -285,7 +330,7 @@ function createHostRuntime(options: HostRuntimeOptions): HostRuntime {
         console.log(`[AgentConnect][Session ${sessionId}] ${type}`);
       }
     }
-    responder.emit({
+    emit({
       jsonrpc: '2.0',
       method: 'acp.session.event',
       params: { sessionId, type, data },
@@ -346,7 +391,11 @@ function createHostRuntime(options: HostRuntimeOptions): HostRuntime {
         responder.error(id, 'AC_ERR_UNSUPPORTED', 'Unknown provider');
         return;
       }
-      const status = await getCachedStatus(provider, { allowFast: true });
+      const statusOptions =
+        (params.options as { fast?: boolean; force?: boolean } | undefined) ?? {};
+      const allowFast = statusOptions.fast !== false;
+      const force = Boolean(statusOptions.force);
+      const status = await getCachedStatus(provider, { allowFast, force });
       responder.reply(id, {
         provider: {
           id: provider.id,
@@ -502,13 +551,38 @@ function createHostRuntime(options: HostRuntimeOptions): HostRuntime {
 
     if (method === 'acp.sessions.create') {
       const sessionId = `sess_${Math.random().toString(36).slice(2, 10)}`;
-      const model = (params.model as string) || 'claude-opus';
+      const rawProvider = params.provider as ProviderId | undefined;
+      if (rawProvider && !providers[rawProvider]) {
+        responder.error(id, 'AC_ERR_UNSUPPORTED', 'Unknown provider');
+        return;
+      }
+      const rawModel = typeof params.model === 'string' ? params.model.trim() : '';
+      const modelInput = rawModel ? rawModel : undefined;
+      if (!rawProvider && !modelInput) {
+        responder.error(id, 'AC_ERR_INVALID_ARGS', 'Model or provider is required');
+        return;
+      }
+      const providerId = rawProvider ?? resolveProviderForModel(modelInput);
+      let model: string | null = modelInput ?? null;
+      if (rawProvider && modelInput) {
+        const matches = await isModelForProvider(modelInput, rawProvider);
+        if (!matches) {
+          responder.error(id, 'AC_ERR_INVALID_ARGS', 'Model does not belong to provider');
+          return;
+        }
+      }
+      if (rawProvider && !modelInput) {
+        model = await pickDefaultModel(rawProvider);
+      }
       const reasoningEffort = (params.reasoningEffort as string) || null;
       const cwd = params.cwd ? resolveAppPathInternal(params.cwd) : undefined;
       const repoRoot = params.repoRoot ? resolveAppPathInternal(params.repoRoot) : undefined;
       const providerDetailLevel = (params.providerDetailLevel as string) || undefined;
-      const providerId = resolveProviderForModel(model);
-      recordModelCapability(model);
+      if (model) {
+        recordModelCapability(model);
+      } else {
+        recordProviderCapability(providerId);
+      }
       sessions.set(sessionId, {
         id: sessionId,
         providerId,
@@ -530,42 +604,37 @@ function createHostRuntime(options: HostRuntimeOptions): HostRuntime {
       const sessionId = params.sessionId as string;
       const existing = sessions.get(sessionId);
       if (!existing) {
-        const model = (params.model as string) || 'claude-opus';
-        const reasoningEffort = (params.reasoningEffort as string) || null;
-        const cwd = params.cwd ? resolveAppPathInternal(params.cwd) : undefined;
-        const repoRoot = params.repoRoot ? resolveAppPathInternal(params.repoRoot) : undefined;
-        const providerDetailLevel = (params.providerDetailLevel as string) || undefined;
-        recordModelCapability(model);
-        sessions.set(sessionId, {
-          id: sessionId,
-          providerId: resolveProviderForModel(model),
-          model,
-          providerSessionId: (params.providerSessionId as string) || null,
-          reasoningEffort,
-          cwd,
-          repoRoot,
-          providerDetailLevel:
-            providerDetailLevel === 'raw' || providerDetailLevel === 'minimal'
-              ? providerDetailLevel
-              : undefined,
-        });
-      } else {
-        if (params.providerSessionId) {
-          existing.providerSessionId = String(params.providerSessionId);
+        responder.error(id, 'AC_ERR_INVALID_ARGS', 'Unknown session');
+        return;
+      }
+      if (params.providerSessionId) {
+        existing.providerSessionId = String(params.providerSessionId);
+      }
+      if (params.cwd) {
+        existing.cwd = resolveAppPathInternal(params.cwd);
+      }
+      if (params.repoRoot) {
+        existing.repoRoot = resolveAppPathInternal(params.repoRoot);
+      }
+      if (params.providerDetailLevel) {
+        const level = String(params.providerDetailLevel);
+        if (level === 'raw' || level === 'minimal') {
+          existing.providerDetailLevel = level;
         }
-        if (params.cwd) {
-          existing.cwd = resolveAppPathInternal(params.cwd);
+      }
+      if (!existing.model && typeof params.model === 'string' && params.model.trim()) {
+        const candidate = params.model.trim();
+        const matches = await isModelForProvider(candidate, existing.providerId);
+        if (!matches) {
+          responder.error(id, 'AC_ERR_INVALID_ARGS', 'Model does not belong to provider');
+          return;
         }
-        if (params.repoRoot) {
-          existing.repoRoot = resolveAppPathInternal(params.repoRoot);
-        }
-        if (params.providerDetailLevel) {
-          const level = String(params.providerDetailLevel);
-          if (level === 'raw' || level === 'minimal') {
-            existing.providerDetailLevel = level;
-          }
-        }
+        existing.model = candidate;
+      }
+      if (existing.model) {
         recordModelCapability(existing.model);
+      } else {
+        recordProviderCapability(existing.providerId);
       }
       responder.reply(id, { sessionId });
       return;
@@ -579,7 +648,16 @@ function createHostRuntime(options: HostRuntimeOptions): HostRuntime {
         responder.error(id, 'AC_ERR_INVALID_ARGS', 'Unknown session');
         return;
       }
-      recordModelCapability(session.model);
+      let model = session.model;
+      if (!model) {
+        model = await pickDefaultModel(session.providerId);
+        if (model) session.model = model;
+      }
+      if (model) {
+        recordModelCapability(model);
+      } else {
+        recordProviderCapability(session.providerId);
+      }
 
       const provider = providers[session.providerId];
       if (!provider) {
@@ -609,43 +687,53 @@ function createHostRuntime(options: HostRuntimeOptions): HostRuntime {
         params.providerDetailLevel === 'raw' || params.providerDetailLevel === 'minimal'
           ? (params.providerDetailLevel as 'raw' | 'minimal')
           : session.providerDetailLevel || 'minimal';
-      activeRuns.set(sessionId, controller);
+      const runToken = `run_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+      activeRuns.set(sessionId, { controller, emit: responder.emit, token: runToken });
       let sawError = false;
 
       provider
         .runPrompt({
           prompt: message,
           resumeSessionId: session.providerSessionId,
-          model: session.model,
+          model: model ?? undefined,
           reasoningEffort: session.reasoningEffort,
           repoRoot,
           cwd,
           providerDetailLevel,
           signal: controller.signal,
           onEvent: (event) => {
+            const current = activeRuns.get(sessionId);
+            if (!current || current.token !== runToken) return;
             if (event.type === 'error') {
               sawError = true;
             }
             if (sawError && event.type === 'final') {
               return;
             }
-            emitSessionEvent(responder, sessionId, event.type, { ...event });
+            emitSessionEvent(current.emit, sessionId, event.type, { ...event });
           },
         })
         .then((result) => {
+          const current = activeRuns.get(sessionId);
+          if (!current || current.token !== runToken) return;
           if (result?.sessionId) {
             session.providerSessionId = result.sessionId;
           }
         })
         .catch((err: Error) => {
+          const current = activeRuns.get(sessionId);
+          if (!current || current.token !== runToken) return;
           if (!sawError) {
-            emitSessionEvent(responder, sessionId, 'error', {
+            emitSessionEvent(current.emit, sessionId, 'error', {
               message: err?.message || 'Provider error',
             });
           }
         })
         .finally(() => {
-          activeRuns.delete(sessionId);
+          const current = activeRuns.get(sessionId);
+          if (current && current.token === runToken) {
+            activeRuns.delete(sessionId);
+          }
         });
 
       responder.reply(id, { accepted: true });
@@ -654,10 +742,11 @@ function createHostRuntime(options: HostRuntimeOptions): HostRuntime {
 
     if (method === 'acp.sessions.cancel') {
       const sessionId = params.sessionId as string;
-      const controller = activeRuns.get(sessionId);
-      if (controller) {
-        controller.abort();
+      const run = activeRuns.get(sessionId);
+      if (run) {
         activeRuns.delete(sessionId);
+        run.controller.abort();
+        emitSessionEvent(run.emit, sessionId, 'final', { cancelled: true });
       }
       responder.reply(id, { cancelled: true });
       return;
