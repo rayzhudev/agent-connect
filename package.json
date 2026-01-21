@@ -21,6 +21,8 @@
     "new:app": "bun scripts/new-app.mjs",
     "dev:host": "bun ./packages/cli/src/index.ts dev",
     "build": "bun run --cwd packages/sdk build && bun run --cwd packages/host build && bun run --cwd packages/ui build && bun run --cwd packages/cli build",
+    "clean:dist": "find packages -name dist -type d -prune -exec rm -r {} +",
+    "publish:all": "bun run clean:dist && bun run build && bun publish --cwd packages/host --access public && bun publish --cwd packages/sdk --access public && bun publish --cwd packages/ui --access public && bun publish --cwd packages/cli --access public",
     "postinstall": "bun run build",
     "test:smoke": "bun run --cwd packages/host build && bun tests/smoke.mjs && bun tests/bridge-smoke.mjs",
     "lint": "eslint .",
