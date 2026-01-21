@@ -9,7 +9,7 @@
     "lint": "next lint"
   },
   "dependencies": {
-    "@agentconnect/cli": "workspace:*",
+    "@agentconnect/host": "workspace:*",
     "@agentconnect/sdk": "workspace:*",
     "@agentconnect/ui": "workspace:*",
     "next": "^14.2.0",

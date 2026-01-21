@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server'
 import { AgentConnect } from '@agentconnect/sdk'
-import { ensureAgentConnectHost } from '@agentconnect/sdk/host'
+import { ensureAgentConnectHost } from '@/lib/agentconnect-host'
 import { extractFiles } from '@/lib/file-extract'
 import type { AnalysisResult } from '@/lib/types'
 

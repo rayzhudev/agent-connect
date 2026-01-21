@@ -1,8 +1,8 @@
 import path from 'path';
 import { promises as fs } from 'fs';
 import { createPrivateKey, createPublicKey, sign as signData } from 'crypto';
-import type { AppManifest } from './types.js';
-import { startDevHost } from './host.js';
+import type { AppManifest } from '@agentconnect/host';
+import { startDevHost } from '@agentconnect/host';
 import { resolveAppPath } from './paths.js';
 import { zipDirectory, hashFile } from './zip.js';
 import { readManifestFromDir, readManifestFromZip, validateManifest } from './manifest.js';

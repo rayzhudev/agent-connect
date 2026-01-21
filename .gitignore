@@ -38,3 +38,4 @@ tmp/
 # AgentConnect
 **/.agentconnect/observed-capabilities.json
 apps/**/expanded_draft.txt
+apps/modal-only/

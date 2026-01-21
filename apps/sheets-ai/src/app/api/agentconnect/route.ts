@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server'
-import { ensureAgentConnectHost } from '@agentconnect/sdk/host'
+import { ensureAgentConnectHost } from '@/lib/agentconnect-host'
 
 export const runtime = 'nodejs'
 

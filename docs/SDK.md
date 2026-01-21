@@ -15,6 +15,85 @@ const client = await AgentConnect.connect({
 });
 ```
 
+## Embedded host (server/runtime)
+
+Use `@agentconnect/host` to create an in-process bridge and inject it for the SDK.
+This only works when the SDK runs in the same JavaScript runtime (Node backend,
+desktop app preload, etc.):
+
+```ts
+import { AgentConnect } from '@agentconnect/sdk';
+import { createHostBridge } from '@agentconnect/host';
+
+const bridge = createHostBridge({
+  mode: 'embedded',
+  basePath: process.cwd(),
+});
+
+globalThis.__AGENTCONNECT_BRIDGE__ = bridge;
+
+const client = await AgentConnect.connect({ preferInjected: true });
+```
+
+If your SDK runs in the browser (separate frontend), expose a WebSocket host from
+your backend instead:
+
+```ts
+import { startDevHost } from '@agentconnect/host';
+
+startDevHost({
+  host: '127.0.0.1',
+  port: 9630,
+  appPath: process.cwd(),
+  mode: 'dev',
+});
+```
+
+```ts
+import { AgentConnect } from '@agentconnect/sdk';
+
+const client = await AgentConnect.connect({ host: 'ws://127.0.0.1:9630' });
+```
+
+API shape:
+
+```ts
+export type HostMode = 'embedded' | 'dev';
+
+export type HostLogger = {
+  debug?: (message: string, meta?: Record<string, unknown>) => void;
+  info?: (message: string, meta?: Record<string, unknown>) => void;
+  warn?: (message: string, meta?: Record<string, unknown>) => void;
+  error?: (message: string, meta?: Record<string, unknown>) => void;
+};
+
+export type HostOptions = {
+  mode?: HostMode;
+  basePath?: string;
+  appManifest?: AppManifest | null;
+  providerConfig?: Partial<Record<ProviderId, ProviderLoginOptions>>;
+  hostId?: string;
+  hostName?: string;
+  hostVersion?: string;
+  log?: HostLogger;
+};
+
+export type DevHostOptions = HostOptions & {
+  host?: string;
+  port?: number;
+  appPath?: string;
+  uiUrl?: string;
+};
+
+export type AgentConnectBridge = {
+  request(method: string, params?: Record<string, unknown>): Promise<unknown>;
+  onEvent?: (handler: (event: { jsonrpc: '2.0'; method: string; params?: Record<string, unknown> }) => void) => () => void;
+};
+
+export function createHostBridge(options?: HostOptions): AgentConnectBridge;
+export function startDevHost(options?: DevHostOptions): void;
+```
+
 ## Types
 
 ```ts
@@ -217,6 +296,23 @@ session.on('error', (event) => {
 });
 
 await session.send('Summarize the main points.');
+```
+
+### Embedded host (Node backend)
+
+```ts
+import { AgentConnect } from '@agentconnect/sdk';
+import { createHostBridge } from '@agentconnect/host';
+
+globalThis.__AGENTCONNECT_BRIDGE__ = createHostBridge({
+  mode: 'embedded',
+  basePath: process.cwd(),
+});
+
+const client = await AgentConnect.connect({ preferInjected: true });
+const session = await client.sessions.create({ model: 'default' });
+
+await session.send('Draft a launch email for the new feature.');
 ```
 
 ### Working directory and resume

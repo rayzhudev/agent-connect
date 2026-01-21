@@ -5,7 +5,7 @@ import type {
   ValidationError,
   ValidationWarning,
   SignatureData,
-} from './types.js';
+} from '@agentconnect/host';
 import { readJson, fileExists } from './fs-utils.js';
 import { hashFile } from './zip.js';
 import { validateManifest } from './manifest.js';

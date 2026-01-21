@@ -1,8 +1,8 @@
 # AgentConnect Dev Host
 
-Use the CLI host during development or embed the host in your own app.
+Use the CLI host during development. For embedded hosts (apps with a backend), use `@agentconnect/host`.
 
-## Install
+## Install (CLI dev host)
 
 ```bash
 npm install -g @agentconnect/cli
@@ -16,6 +16,82 @@ bun add -g @agentconnect/cli
 
 ```bash
 agentconnect dev --app . --ui http://localhost:5173
+```
+
+`@agentconnect/cli` is a thin wrapper around `startDevHost` from `@agentconnect/host`.
+
+## Embedded host (server/runtime)
+
+Install the host package alongside your backend:
+
+```bash
+npm install @agentconnect/host
+```
+
+```bash
+bun add @agentconnect/host
+```
+
+Create and inject a bridge (exposed for the SDK to pick up):
+
+```ts
+import { createHostBridge } from '@agentconnect/host';
+
+const bridge = createHostBridge({
+  mode: 'embedded',
+  basePath: process.cwd(),
+});
+
+globalThis.__AGENTCONNECT_BRIDGE__ = bridge;
+```
+
+The SDK will automatically use the injected bridge when `preferInjected` is true (default).
+
+## Embedded host patterns
+
+### Same-process usage (Node routes, workers, desktop apps)
+
+Use the in-process bridge when the SDK runs in the same JavaScript runtime as the host:
+
+```ts
+import { AgentConnect } from '@agentconnect/sdk';
+import { createHostBridge } from '@agentconnect/host';
+
+globalThis.__AGENTCONNECT_BRIDGE__ = createHostBridge({
+  mode: 'embedded',
+  basePath: process.cwd(),
+});
+
+const client = await AgentConnect.connect({ preferInjected: true });
+```
+
+For desktop apps (Electron/Tauri), inject the bridge in the preload/main process so
+`window.__AGENTCONNECT_BRIDGE__` is available to the renderer.
+
+### Separate frontend (browser) + backend
+
+If the SDK runs in the browser, it cannot access the backend bridge directly.
+In that case, run a WebSocket host in your backend using `startDevHost`:
+
+```ts
+import { startDevHost } from '@agentconnect/host';
+
+startDevHost({
+  host: '127.0.0.1',
+  port: 9630,
+  appPath: process.cwd(),
+  mode: 'dev',
+});
+```
+
+Then connect from the browser:
+
+```ts
+import { AgentConnect } from '@agentconnect/sdk';
+
+const client = await AgentConnect.connect({
+  host: 'ws://127.0.0.1:9630',
+});
 ```
 
 ## Provider configuration

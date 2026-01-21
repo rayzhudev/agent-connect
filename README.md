@@ -2,6 +2,7 @@
 
 [![CI](https://github.com/rayzhudev/agent-connect/actions/workflows/ci.yml/badge.svg)](https://github.com/rayzhudev/agent-connect/actions/workflows/ci.yml)
 [![npm](https://img.shields.io/npm/v/@agentconnect/sdk)](https://www.npmjs.com/package/@agentconnect/sdk)
+[![npm](https://img.shields.io/npm/v/@agentconnect/host)](https://www.npmjs.com/package/@agentconnect/host)
 [![npm](https://img.shields.io/npm/v/@agentconnect/ui)](https://www.npmjs.com/package/@agentconnect/ui)
 [![npm](https://img.shields.io/npm/v/@agentconnect/cli)](https://www.npmjs.com/package/@agentconnect/cli)
 
@@ -27,7 +28,7 @@ Currently supported coding agent providers:
 ## How it works
 
 1. Your app adds the SDK and optional UI components.
-2. A local host (AgentConnect CLI or embedded host) bridges to the user's agent CLI.
+2. A local host (CLI for dev, `@agentconnect/host` for embedded) bridges to the user's agent CLI.
 3. Your app uses a single session API to send prompts and stream responses.
 
 ## Quick start
@@ -80,20 +81,26 @@ session.on('final', (event) => {
 await session.send('Summarize the following draft in 3 bullets...');
 ```
 
-Run the local host (separate terminal):
+Run the dev host (separate terminal, CLI is dev-only):
 
 ```bash
 npm install -g @agentconnect/cli
 agentconnect dev --app . --ui http://localhost:5173
 ```
 
-Auto-start a local host from a Node backend:
+Embed the host in your backend (and inject the bridge):
 
 ```ts
-import { ensureAgentConnectHost } from '@agentconnect/sdk/host';
+import { createHostBridge } from '@agentconnect/host';
 
-await ensureAgentConnectHost();
+globalThis.__AGENTCONNECT_BRIDGE__ = createHostBridge({
+  mode: 'embedded',
+  basePath: process.cwd(),
+});
 ```
+
+Use the embedded bridge when the SDK runs in the same process (Node routes, desktop apps).
+If the SDK runs in the browser, expose a WebSocket host from your backend using `startDevHost`.
 
 ## Try the examples
 

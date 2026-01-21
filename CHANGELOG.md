@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## 0.2.0
+
+- Add new `@agentconnect/host` package for embedded hosting and shared provider runtime.
+- Move host runtime out of CLI; CLI now wraps `startDevHost` from the host package.
+- Add in-process host bridge for embedded usage (`createHostBridge`).
+- Remove `@agentconnect/sdk/host` auto-spawn dev host helper (use `@agentconnect/host` instead).
+- Update docs, tests, and examples to reflect embedded host guidance.
+
 ## 0.1.7
 
 - Fix lint failures in provider code and modal-only app.

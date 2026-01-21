@@ -1,6 +1,6 @@
 import path from 'path';
 import Ajv, { type ErrorObject } from 'ajv';
-import type { AppManifest } from './types.js';
+import type { AppManifest } from '@agentconnect/host';
 import { readJson, fileExists } from './fs-utils.js';
 import { findSchemaDir } from './paths.js';
 import { readZipEntry } from './zip.js';

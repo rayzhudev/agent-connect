@@ -1,6 +1,6 @@
 import path from 'path';
 import { promises as fs } from 'fs';
-import type { AppManifest, RegistryIndex } from './types.js';
+import type { AppManifest, RegistryIndex } from '@agentconnect/host';
 import { readJson, writeJson, fileExists } from './fs-utils.js';
 import { hashFile } from './zip.js';
 import { readManifestFromZip } from './manifest.js';

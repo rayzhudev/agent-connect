@@ -91,6 +91,23 @@ await session.close();
 client.close();
 ```
 
+## Embedded host (Node backend)
+
+```ts
+import { AgentConnect } from '@agentconnect/sdk';
+import { createHostBridge } from '@agentconnect/host';
+
+globalThis.__AGENTCONNECT_BRIDGE__ = createHostBridge({
+  mode: 'embedded',
+  basePath: process.cwd(),
+});
+
+const client = await AgentConnect.connect({ preferInjected: true });
+```
+
+If your SDK runs in the browser, expose a WebSocket host from your backend using
+`startDevHost` and connect with `AgentConnect.connect({ host: 'ws://...' })`.
+
 ## Provider and model helpers
 
 ```ts

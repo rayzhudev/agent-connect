@@ -1,6 +1,6 @@
 import path from 'path';
 import { promises as fs } from 'fs';
-import type { CollectFilesOptions } from './types.js';
+import type { CollectFilesOptions } from '@agentconnect/host';
 
 export interface CollectedFile {
   fullPath: string;
