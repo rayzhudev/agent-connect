@@ -1,6 +1,6 @@
 {
   "name": "@agentconnect/cli",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "license": "MIT",
   "type": "module",
   "homepage": "https://github.com/rayzhudev/agent-connect",
@@ -32,7 +32,7 @@
     "dev": "tsc --watch"
   },
   "dependencies": {
-    "@agentconnect/host": "^0.2.1",
+    "@agentconnect/host": "^0.2.2",
     "ajv": "^8.17.1",
     "yauzl": "^2.10.0",
     "yazl": "^2.5.1"

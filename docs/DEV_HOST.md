@@ -127,6 +127,15 @@ Cursor environment variables (optional):
 - `AGENTCONNECT_CURSOR_MODEL` (default model ID)
 - `AGENTCONNECT_CURSOR_MODELS` (JSON array of model IDs)
 
+Codex environment variables (optional):
+
+- `AGENTCONNECT_CODEX_REASONING_SUMMARY` (`detailed`, `concise`, `auto`, or `off`)
+- `AGENTCONNECT_CODEX_SUPPORTS_REASONING_SUMMARIES` (`true`/`false`, force-enable summaries)
+- `AGENTCONNECT_CODEX_SHOW_RAW_REASONING` (`true` to include raw thinking text)
+- `AGENTCONNECT_CODEX_MODEL_VERBOSITY` (`high` for GPT‑5 models)
+- `AGENTCONNECT_CODEX_RUST_LOG` (override `RUST_LOG` for Codex internals)
+- `AGENTCONNECT_CODEX_DEBUG_LOGS` (`true` to set `RUST_LOG=codex_exec=debug,codex_core=debug`)
+
 ## Local model support (OpenAI-compatible HTTP API)
 
 Environment variables:

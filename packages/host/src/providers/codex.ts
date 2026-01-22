@@ -11,6 +11,7 @@ import type {
   ReasoningEffort,
   InstallResult,
   ProviderDetail,
+  ProviderDetailLevel,
   CommandResult,
 } from '../types.js';
 import {
@@ -276,9 +277,11 @@ function buildCodexExecArgs(options: {
   resumeSessionId?: string | null;
   model?: string;
   reasoningEffort?: string | null;
+  providerDetailLevel?: ProviderDetailLevel;
   mode: CodexExecMode;
 }): string[] {
-  const { prompt, cdTarget, resumeSessionId, model, reasoningEffort, mode } = options;
+  const { prompt, cdTarget, resumeSessionId, model, reasoningEffort, providerDetailLevel, mode } =
+    options;
   const args: string[] = ['exec', '--skip-git-repo-check'];
   if (mode === 'legacy') {
     args.push('--json', '-C', cdTarget);
@@ -286,6 +289,30 @@ function buildCodexExecArgs(options: {
     args.push('--experimental-json', '--cd', cdTarget);
   }
   args.push('--yolo');
+  const summarySetting = process.env.AGENTCONNECT_CODEX_REASONING_SUMMARY;
+  const summary =
+    summarySetting && summarySetting.trim()
+      ? summarySetting.trim()
+      : 'detailed';
+  const summaryDisabled = ['0', 'false', 'off', 'none'].includes(summary.toLowerCase());
+  if (!summaryDisabled) {
+    args.push('--config', `model_reasoning_summary=${summary}`);
+    const supportsSetting = process.env.AGENTCONNECT_CODEX_SUPPORTS_REASONING_SUMMARIES;
+    const supportsValue =
+      supportsSetting && supportsSetting.trim() ? supportsSetting.trim() : 'true';
+    args.push('--config', `model_supports_reasoning_summaries=${supportsValue}`);
+  }
+  const verbositySetting = process.env.AGENTCONNECT_CODEX_MODEL_VERBOSITY;
+  if (verbositySetting && verbositySetting.trim()) {
+    args.push('--config', `model_verbosity=${verbositySetting.trim()}`);
+  }
+  const rawSetting = process.env.AGENTCONNECT_CODEX_SHOW_RAW_REASONING;
+  const rawEnabled =
+    providerDetailLevel === 'raw' ||
+    (rawSetting ? ['1', 'true', 'yes', 'on'].includes(rawSetting.trim().toLowerCase()) : false);
+  if (rawEnabled) {
+    args.push('--config', 'show_raw_agent_reasoning=true');
+  }
   if (model) {
     args.push('--model', String(model));
   }
@@ -829,6 +856,7 @@ export function runCodexPrompt({
           resumeSessionId,
           model,
           reasoningEffort,
+          providerDetailLevel,
           mode,
         });
 
@@ -840,7 +868,24 @@ export function runCodexPrompt({
 
         const child = spawn(command, args, {
           cwd: runDir,
-          env: { ...process.env },
+          env: (() => {
+            const env = { ...process.env };
+            if (!env.RUST_LOG) {
+              const override = process.env.AGENTCONNECT_CODEX_RUST_LOG;
+              if (override && override.trim()) {
+                env.RUST_LOG = override.trim();
+              } else {
+                const debugFlag = process.env.AGENTCONNECT_CODEX_DEBUG_LOGS;
+                const enabled = debugFlag
+                  ? ['1', 'true', 'yes', 'on'].includes(debugFlag.trim().toLowerCase())
+                  : false;
+                if (enabled) {
+                  env.RUST_LOG = 'codex_exec=debug,codex_core=debug';
+                }
+              }
+            }
+            return env;
+          })(),
           stdio: ['ignore', 'pipe', 'pipe'],
         });
 
