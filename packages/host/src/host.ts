@@ -18,7 +18,7 @@ import type {
   ProviderLoginOptions,
 } from './types.js';
 import { listModels, listRecentModels, providers, resolveProviderForModel } from './providers/index.js';
-import { debugLog } from './providers/utils.js';
+import { debugLog, setSpawnLogging } from './providers/utils.js';
 import { createObservedTracker } from './observed.js';
 
 interface RpcPayload {
@@ -59,6 +59,7 @@ export interface HostOptions {
   hostId?: string;
   hostName?: string;
   hostVersion?: string;
+  logSpawn?: boolean;
   log?: HostLogger;
 }
 
@@ -155,6 +156,7 @@ function createHostRuntime(options: HostRuntimeOptions): HostRuntime {
   const hostName =
     options.hostName || (mode === 'dev' ? 'AgentConnect Dev Host' : 'AgentConnect Host');
   const hostVersion = options.hostVersion || '0.1.0';
+  setSpawnLogging(Boolean(options.logSpawn));
 
   function resolveAppPathInternal(input: unknown): string {
     if (!input) return basePath;

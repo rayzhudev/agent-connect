@@ -6,6 +6,7 @@ import type {
   RunPromptResult,
   InstallResult,
 } from '../types.js';
+import { logProviderSpawn } from './utils.js';
 
 function getLocalBaseUrl(): string {
   const base = process.env.AGENTCONNECT_LOCAL_BASE_URL || 'http://localhost:11434/v1';
@@ -120,6 +121,13 @@ export async function runLocalPrompt({
     onEvent({ type: 'error', message: 'Local provider model is not configured.' });
     return { sessionId: null };
   }
+
+  logProviderSpawn({
+    provider: 'local',
+    command: 'local',
+    args: ['--base-url', base, '--model', resolvedModel, prompt],
+    cwd: process.cwd(),
+  });
 
   const payload = {
     model: resolvedModel,

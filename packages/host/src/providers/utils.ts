@@ -5,6 +5,44 @@ import path from 'path';
 import type { CommandResult } from '../types.js';
 
 const DEBUG_ENABLED = Boolean(process.env.AGENTCONNECT_DEBUG?.trim());
+let SPAWN_LOG_ENABLED = false;
+
+export function setSpawnLogging(enabled: boolean): void {
+  SPAWN_LOG_ENABLED = enabled;
+}
+
+export function logProviderSpawn(options: {
+  provider: string;
+  command: string;
+  args: string[];
+  cwd?: string;
+  resumeSessionId?: string | null;
+  redactIndex?: number;
+}): void {
+  if (!SPAWN_LOG_ENABLED) return;
+  const redacted = [...options.args];
+  const idx =
+    typeof options.redactIndex === 'number' ? options.redactIndex : redacted.length - 1;
+  if (idx >= 0 && idx < redacted.length) {
+    redacted[idx] = '[prompt]';
+  }
+  const cwd = options.cwd || process.cwd();
+  const formatted = formatShellCommand(options.command, redacted);
+  const fullCommand = cwd
+    ? `${formatShellCommand('cd', [cwd])} && ${formatted}`
+    : formatted;
+  console.log(`AgentConnect: ${fullCommand}`);
+}
+
+function formatShellCommand(command: string, args: string[]): string {
+  return [command, ...args].map(formatShellArg).join(' ');
+}
+
+function formatShellArg(value: string): string {
+  if (!value) return "''";
+  if (/^[A-Za-z0-9_./:@+=,-]+$/.test(value)) return value;
+  return `'${value.replace(/'/g, `'\\''`)}'`;
+}
 
 export function debugLog(
   scope: string,

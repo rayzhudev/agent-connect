@@ -75,6 +75,7 @@ export type HostOptions = {
   hostId?: string;
   hostName?: string;
   hostVersion?: string;
+  logSpawn?: boolean;
   log?: HostLogger;
 };
 

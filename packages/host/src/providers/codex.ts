@@ -22,6 +22,7 @@ import {
   commandExists,
   createLineParser,
   debugLog,
+  logProviderSpawn,
   resolveWindowsCommand,
   resolveCommandPath,
   resolveCommandRealPath,
@@ -858,6 +859,14 @@ export function runCodexPrompt({
           reasoningEffort,
           providerDetailLevel,
           mode,
+        });
+
+        logProviderSpawn({
+          provider: 'codex',
+          command,
+          args,
+          cwd: runDir,
+          resumeSessionId,
         });
 
         const argsPreview = [...args];

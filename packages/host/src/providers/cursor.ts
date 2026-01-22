@@ -17,6 +17,7 @@ import {
   commandExists,
   createLineParser,
   debugLog,
+  logProviderSpawn,
   resolveWindowsCommand,
   resolveCommandPath,
   resolveCommandRealPath,
@@ -751,6 +752,14 @@ export function runCursorPrompt({
     }
 
     args.push(prompt);
+
+    logProviderSpawn({
+      provider: 'cursor',
+      command,
+      args,
+      cwd: runDir,
+      resumeSessionId,
+    });
 
     const argsPreview = [...args];
     if (argsPreview.length > 0) {

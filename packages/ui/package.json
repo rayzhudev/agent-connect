@@ -1,6 +1,6 @@
 {
   "name": "@agentconnect/ui",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "license": "MIT",
   "type": "module",
   "homepage": "https://github.com/rayzhudev/agent-connect",
@@ -29,7 +29,7 @@
     "dev": "tsc --watch"
   },
   "dependencies": {
-    "@agentconnect/sdk": "^0.2.2"
+    "@agentconnect/sdk": "^0.2.3"
   },
   "devDependencies": {
     "typescript": "^5.6.2"

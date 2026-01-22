@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file.
 
+## 0.2.3
+
+- Add opt-in spawn logging (`logSpawn`) with prompt redaction and shell-style output formatting.
+
 ## 0.2.2
 
 - Add Codex reasoning summary and verbosity flags with opt-in raw reasoning and debug logging.

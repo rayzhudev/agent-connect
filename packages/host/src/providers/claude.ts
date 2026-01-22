@@ -22,6 +22,7 @@ import {
   commandExists,
   createLineParser,
   debugLog,
+  logProviderSpawn,
   resolveWindowsCommand,
   resolveCommandPath,
   resolveCommandRealPath,
@@ -1131,6 +1132,14 @@ export function runClaudePrompt({
     }
     if (resumeSessionId) args.push('--resume', resumeSessionId);
     args.push(prompt);
+
+    logProviderSpawn({
+      provider: 'claude',
+      command,
+      args,
+      cwd: cwd || process.cwd(),
+      resumeSessionId,
+    });
 
     const child = spawn(command, args, {
       cwd,
