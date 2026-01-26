@@ -150,8 +150,27 @@ Events are pushed to the client over the same WebSocket:
   "method": "acp.session.event",
   "params": {
     "sessionId": "sess_123",
-    "type": "delta" | "final" | "usage" | "status" | "error" | "raw_line" | "message" | "thinking" | "tool_call" | "detail",
+    "type": "delta" | "final" | "usage" | "status" | "error" | "raw_line" | "message" | "thinking" | "tool_call" | "detail" | "summary",
     "data": { ... }
+  }
+}
+```
+
+Summary events are optional and may arrive asynchronously:
+
+```
+{
+  "method": "acp.session.event",
+  "params": {
+    "sessionId": "sess_123",
+    "type": "summary",
+    "data": {
+      "summary": "Build a chat summary pipeline for agent sessions",
+      "source": "prompt" | "claude-log",
+      "provider": "claude" | "codex" | "cursor" | "local",
+      "model": "model-id",
+      "createdAt": "2026-01-25T18:12:00.000Z"
+    }
   }
 }
 ```
@@ -403,6 +422,7 @@ export type SessionEvent =
   | { type: 'message'; provider?: ProviderId; role: 'system' | 'user' | 'assistant'; content: string; contentParts?: unknown; providerSessionId?: string | null; providerDetail?: ProviderDetail }
   | { type: 'thinking'; provider?: ProviderId; phase: 'delta' | 'start' | 'completed' | 'error'; text?: string; timestampMs?: number; providerSessionId?: string | null; providerDetail?: ProviderDetail }
   | { type: 'tool_call'; provider?: ProviderId; name?: string; callId?: string; input?: unknown; output?: unknown; phase?: 'delta' | 'start' | 'completed' | 'error'; providerSessionId?: string | null; providerDetail?: ProviderDetail }
+  | { type: 'summary'; summary: string; source?: 'prompt' | 'claude-log'; provider?: ProviderId; model?: string | null; createdAt?: string; providerSessionId?: string | null; providerDetail?: ProviderDetail }
   | { type: 'detail'; provider?: ProviderId; providerSessionId?: string | null; providerDetail: ProviderDetail };
 
 export type ProviderDetail = {

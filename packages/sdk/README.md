@@ -66,6 +66,10 @@ const resumed = await client.sessions.resume('sess_123', {
 ## Additional session events
 
 ```ts
+session.on('summary', (event) => {
+  console.log('Summary:', event.summary);
+});
+
 session.on('raw_line', (event) => {
   console.log('CLI:', event.line);
 });
@@ -121,6 +125,18 @@ if (!claude.loggedIn) {
 
 const models = await client.models.list('claude');
 const recent = await client.models.recent('claude');
+```
+
+## Storage
+
+```ts
+await client.storage.set('session:sess_123:summary', {
+  summary: 'Audit README for clarity',
+  source: 'prompt',
+});
+
+const stored = await client.storage.get('session:sess_123:summary');
+console.log(stored.value);
 ```
 
 ## Requirements

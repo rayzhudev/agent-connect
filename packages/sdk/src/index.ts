@@ -56,6 +56,16 @@ export type SessionEvent =
       providerDetail?: ProviderDetail;
     }
   | {
+      type: 'summary';
+      summary: string;
+      source?: 'prompt' | 'claude-log';
+      provider?: ProviderId;
+      model?: string | null;
+      createdAt?: string;
+      providerSessionId?: string | null;
+      providerDetail?: ProviderDetail;
+    }
+  | {
       type: 'usage';
       usage: Record<string, number>;
       providerSessionId?: string | null;
@@ -115,7 +125,8 @@ export type SessionEvent =
       provider?: ProviderId;
       providerSessionId?: string | null;
       providerDetail: ProviderDetail;
-    };
+    }
+  ;
 
 export type ProviderLoginOptions = {
   baseUrl?: string;
@@ -232,6 +243,11 @@ export interface AgentConnectClient {
       url: string,
       init?: { method?: string; headers?: Record<string, string>; body?: string }
     ): Promise<{ status: number; headers: Record<string, string>; body: string }>;
+  };
+
+  storage: {
+    get(key: string): Promise<{ value: unknown }>;
+    set(key: string, value: unknown): Promise<{ ok: boolean }>;
   };
 
   backend: {
@@ -596,6 +612,28 @@ class AgentConnectClientImpl implements AgentConnectClient {
         ...(providerDetail && { providerDetail }),
       };
     }
+    if (type === 'summary') {
+      const summary = typeof data?.summary === 'string' ? data.summary : '';
+      if (!summary) return null;
+      const provider =
+        typeof data?.provider === 'string' ? (data.provider as ProviderId) : undefined;
+      const source =
+        data?.source === 'prompt' || data?.source === 'claude-log'
+          ? data.source
+          : undefined;
+      const model = typeof data?.model === 'string' ? data.model : undefined;
+      const createdAt = typeof data?.createdAt === 'string' ? data.createdAt : undefined;
+      return {
+        type: 'summary',
+        summary,
+        source,
+        provider,
+        model,
+        createdAt,
+        providerSessionId,
+        ...(providerDetail && { providerDetail }),
+      };
+    }
     if (type === 'usage') {
       return {
         type: 'usage',
@@ -860,6 +898,15 @@ class AgentConnectClientImpl implements AgentConnectClient {
         headers: Record<string, string>;
         body: string;
       };
+    },
+  };
+
+  storage = {
+    get: async (key: string): Promise<{ value: unknown }> => {
+      return (await this.request('acp.storage.get', { key })) as { value: unknown };
+    },
+    set: async (key: string, value: unknown): Promise<{ ok: boolean }> => {
+      return (await this.request('acp.storage.set', { key, value })) as { ok: boolean };
     },
   };
 

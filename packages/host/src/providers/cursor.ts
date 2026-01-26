@@ -792,6 +792,7 @@ export function runCursorPrompt({
     let finalSessionId: string | null = null;
     let didFinalize = false;
     let sawError = false;
+    let pendingError: { message: string; providerDetail?: ProviderDetail } | null = null;
     let sawJson = false;
     let rawOutput = '';
     const stdoutLines: string[] = [];
@@ -938,7 +939,17 @@ export function runCursorPrompt({
 
       if (isErrorEvent(ev)) {
         const message = extractErrorMessage(ev) || 'Cursor run failed';
-        emitError(message, buildProviderDetail(ev.subtype ? `error.${ev.subtype}` : 'error', {}, ev));
+        const providerDetail = buildProviderDetail(
+          ev.subtype ? `error.${ev.subtype}` : 'error',
+          {},
+          ev
+        );
+        if (ev.type === 'result') {
+          emitError(message, providerDetail);
+        } else {
+          pendingError = { message, providerDetail };
+          debugLog('Cursor', 'event-error', { message, subtype: ev.subtype ?? null });
+        }
         return;
       }
 
@@ -1011,12 +1022,17 @@ export function runCursorPrompt({
       if (!didFinalize) {
         if (code && code !== 0) {
           const hint = stderrLines.at(-1) || stdoutLines.at(-1) || '';
-          const suffix = hint ? `: ${hint}` : '';
+          const context = pendingError?.message || hint;
+          const suffix = context ? `: ${context}` : '';
           debugLog('Cursor', 'exit', { code, stderr: stderrLines, stdout: stdoutLines });
-          emitError(`Cursor CLI exited with code ${code}${suffix}`);
+          emitError(`Cursor CLI exited with code ${code}${suffix}`, pendingError?.providerDetail);
         } else if (!sawError) {
-          const fallback = !sawJson ? rawOutput.trim() : '';
-          emitFinal(aggregated || fallback);
+          if (pendingError) {
+            emitError(pendingError.message, pendingError.providerDetail);
+          } else {
+            const fallback = !sawJson ? rawOutput.trim() : '';
+            emitFinal(aggregated || fallback);
+          }
         }
       }
       resolve({ sessionId: finalSessionId });

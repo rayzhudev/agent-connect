@@ -36,6 +36,7 @@ tmp/
 .cache/
 
 # AgentConnect
+.agentconnect/
 **/.agentconnect/observed-capabilities.json
 apps/**/expanded_draft.txt
 apps/modal-only/

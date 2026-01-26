@@ -157,7 +157,8 @@ export type SessionEvent =
   | { type: 'message'; provider?: ProviderId; role: 'system' | 'user' | 'assistant'; content: string; contentParts?: unknown; providerSessionId?: string | null; providerDetail?: ProviderDetail }
   | { type: 'thinking'; provider?: ProviderId; phase: 'delta' | 'start' | 'completed' | 'error'; text?: string; timestampMs?: number; providerSessionId?: string | null; providerDetail?: ProviderDetail }
   | { type: 'tool_call'; provider?: ProviderId; name?: string; callId?: string; input?: unknown; output?: unknown; phase?: 'delta' | 'start' | 'completed' | 'error'; providerSessionId?: string | null; providerDetail?: ProviderDetail }
-  | { type: 'detail'; provider?: ProviderId; providerSessionId?: string | null; providerDetail: ProviderDetail };
+  | { type: 'detail'; provider?: ProviderId; providerSessionId?: string | null; providerDetail: ProviderDetail }
+  | { type: 'summary'; summary: string; source?: 'prompt' | 'claude-log'; provider?: ProviderId; model?: string | null; createdAt?: string; providerSessionId?: string | null; providerDetail?: ProviderDetail };
 
 export type ProviderDetail = {
   eventType: string;
@@ -274,6 +275,11 @@ export interface AgentConnectClient {
     stop(appId: string): Promise<{ status: string }>;
     status(appId: string): Promise<{ status: string; url?: string }>;
   };
+
+  storage: {
+    get(key: string): Promise<{ value: unknown }>;
+    set(key: string, value: unknown): Promise<{ ok: boolean }>;
+  };
 }
 ```
 
@@ -298,6 +304,14 @@ session.on('error', (event) => {
 });
 
 await session.send('Summarize the main points.');
+```
+
+### Summary events
+
+```ts
+session.on('summary', (event) => {
+  console.log('Session summary:', event.summary);
+});
 ```
 
 ### Embedded host (Node backend)

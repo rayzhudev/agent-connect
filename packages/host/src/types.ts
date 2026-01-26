@@ -169,11 +169,12 @@ export interface SessionEvent {
     | 'usage'
     | 'status'
     | 'error'
-    | 'raw_line'
-    | 'message'
-    | 'thinking'
-    | 'tool_call'
-    | 'detail';
+  | 'raw_line'
+  | 'message'
+  | 'thinking'
+  | 'tool_call'
+  | 'detail'
+  | 'summary';
   text?: string;
   message?: string;
   line?: string;
@@ -193,6 +194,10 @@ export interface SessionEvent {
   output?: unknown;
   timestampMs?: number;
   cancelled?: boolean;
+  summary?: string;
+  source?: 'prompt' | 'claude-log';
+  model?: string | null;
+  createdAt?: string;
 }
 
 export interface RunPromptOptions {
@@ -242,6 +247,14 @@ export interface SessionState {
   cwd?: string;
   repoRoot?: string;
   providerDetailLevel?: ProviderDetailLevel;
+  summaryRequested?: boolean;
+  claudeSummaryWatch?: boolean;
+  summarySeed?: string;
+  summaryReasoning?: string;
+  summary?: string | null;
+  summarySource?: 'prompt' | 'claude-log';
+  summaryModel?: string | null;
+  summaryCreatedAt?: string;
 }
 
 export interface BackendState {

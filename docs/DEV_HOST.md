@@ -136,6 +136,13 @@ Codex environment variables (optional):
 - `AGENTCONNECT_CODEX_RUST_LOG` (override `RUST_LOG` for Codex internals)
 - `AGENTCONNECT_CODEX_DEBUG_LOGS` (`true` to set `RUST_LOG=codex_exec=debug,codex_core=debug`)
 
+Summary model overrides (optional):
+
+- `AGENTCONNECT_SUMMARY_MODEL_CLAUDE`
+- `AGENTCONNECT_SUMMARY_MODEL_CODEX`
+- `AGENTCONNECT_SUMMARY_MODEL_CURSOR`
+- `AGENTCONNECT_SUMMARY_MODEL_LOCAL`
+
 ## Local model support (OpenAI-compatible HTTP API)
 
 Environment variables:

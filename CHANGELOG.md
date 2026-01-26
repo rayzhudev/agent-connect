@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## 0.2.4
+
+- Prevent transient provider errors from cancelling retries for Codex and Cursor runs.
+- Improve session summaries with tighter prompts, early reasoning context, and reliable seed cleanup.
+- Prefer Claude log-based summaries and surface summaries in the modal-only demo UI.
+- Fix SDK typings for summary events and expose the storage API on the client.
+
 ## 0.2.3
 
 - Add opt-in spawn logging (`logSpawn`) with prompt redaction and shell-style output formatting.

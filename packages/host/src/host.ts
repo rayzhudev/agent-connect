@@ -20,6 +20,14 @@ import type {
 import { listModels, listRecentModels, providers, resolveProviderForModel } from './providers/index.js';
 import { debugLog, setSpawnLogging } from './providers/utils.js';
 import { createObservedTracker } from './observed.js';
+import { createStorage } from './storage.js';
+import {
+  buildSummaryPrompt,
+  getSummaryModel,
+  pollClaudeSummary,
+  runSummaryPrompt,
+  type SummaryPayload,
+} from './summary.js';
 
 interface RpcPayload {
   jsonrpc?: string;
@@ -140,6 +148,7 @@ function createHostRuntime(options: HostRuntimeOptions): HostRuntime {
     appId,
     requested: requestedCapabilities,
   });
+  const storage = createStorage({ basePath, appId });
 
   const sessions = new Map<string, SessionState>();
   const activeRuns = new Map<string, ActiveRun>();
@@ -223,6 +232,101 @@ function createHostRuntime(options: HostRuntimeOptions): HostRuntime {
 
   function recordProviderCapability(providerId: ProviderId): void {
     recordCapability(`model.${providerId}`);
+  }
+
+  const SUMMARY_REASONING_MAX_LINES = 3;
+  const SUMMARY_REASONING_MAX_CHARS = 280;
+
+  function appendSummaryReasoning(session: SessionState, text: string): void {
+    if (!text.trim()) return;
+    const existing = session.summaryReasoning
+      ? session.summaryReasoning.split('\n').filter(Boolean)
+      : [];
+    if (existing.length >= SUMMARY_REASONING_MAX_LINES) return;
+    const incoming = text
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter(Boolean);
+    for (const line of incoming) {
+      if (existing.length >= SUMMARY_REASONING_MAX_LINES) break;
+      const base = existing.join('\n');
+      const separator = base ? '\n' : '';
+      const next = `${base}${separator}${line}`;
+      if (next.length > SUMMARY_REASONING_MAX_CHARS) {
+        const remaining = SUMMARY_REASONING_MAX_CHARS - (base.length + separator.length);
+        if (remaining > 0) {
+          existing.push(line.slice(0, remaining).trim());
+        }
+        break;
+      }
+      existing.push(line);
+    }
+    session.summaryReasoning = existing.join('\n');
+  }
+
+  function clearSummarySeed(session: SessionState): void {
+    session.summarySeed = undefined;
+    session.summaryReasoning = undefined;
+  }
+
+  async function startPromptSummary(options: {
+    sessionId: string;
+    session: SessionState;
+    message: string;
+    reasoning?: string;
+    emit: RpcResponder['emit'];
+  }): Promise<void> {
+    const { sessionId, session, message, reasoning, emit } = options;
+    if (session.providerId === 'claude') return;
+    if (session.summaryRequested) return;
+    session.summaryRequested = true;
+    const provider = providers[session.providerId];
+    if (!provider) return;
+    const prompt = buildSummaryPrompt(message, reasoning);
+    const summaryModel = getSummaryModel(session.providerId);
+    const cwd = session.cwd || basePath;
+    const repoRoot = session.repoRoot || basePath;
+    const result = await runSummaryPrompt({
+      provider,
+      prompt,
+      model: summaryModel,
+      cwd,
+      repoRoot,
+    });
+    if (!result) return;
+    persistSummary(emit, sessionId, {
+      summary: result.summary,
+      source: 'prompt',
+      provider: session.providerId,
+      model: result.model ?? null,
+      createdAt: new Date().toISOString(),
+    }, session);
+  }
+
+  async function startClaudeLogSummary(options: {
+    sessionId: string;
+    session: SessionState;
+    emit: RpcResponder['emit'];
+  }): Promise<void> {
+    const { sessionId, session, emit } = options;
+    if (session.providerId !== 'claude') return;
+    if (session.claudeSummaryWatch) return;
+    const providerSessionId = session.providerSessionId;
+    if (!providerSessionId) return;
+    session.claudeSummaryWatch = true;
+    const projectRoot = session.repoRoot || session.cwd || basePath;
+    const summary = await pollClaudeSummary({
+      basePath: projectRoot,
+      sessionId: providerSessionId,
+    });
+    if (!summary) return;
+    persistSummary(emit, sessionId, {
+      summary,
+      source: 'claude-log',
+      provider: 'claude',
+      model: session.model ?? null,
+      createdAt: new Date().toISOString(),
+    }, session);
   }
 
   async function getCachedStatus(
@@ -337,6 +441,50 @@ function createHostRuntime(options: HostRuntimeOptions): HostRuntime {
       method: 'acp.session.event',
       params: { sessionId, type, data },
     });
+  }
+
+  function maybeStartPromptSummary(options: {
+    sessionId: string;
+    session: SessionState;
+    emit: RpcResponder['emit'];
+    trigger: 'reasoning' | 'output';
+  }): void {
+    const { sessionId, session, emit, trigger } = options;
+    if (session.providerId === 'claude') return;
+    if (session.summaryRequested) return;
+    if (!session.summarySeed) return;
+    if (trigger === 'reasoning' && !session.summaryReasoning) return;
+    const message = session.summarySeed;
+    const reasoning = session.summaryReasoning;
+    clearSummarySeed(session);
+    void startPromptSummary({ sessionId, session, message, reasoning, emit });
+  }
+
+  function sessionSummaryKey(sessionId: string): string {
+    return `session:${sessionId}:summary`;
+  }
+
+  function persistSummary(
+    emit: RpcResponder['emit'],
+    sessionId: string,
+    payload: SummaryPayload,
+    session?: SessionState
+  ): void {
+    if (!payload.summary) return;
+    if (session) {
+      if (session.summarySource === 'claude-log' && payload.source === 'prompt') {
+        return;
+      }
+      if (session.summary === payload.summary && session.summarySource === payload.source) {
+        return;
+      }
+      session.summary = payload.summary;
+      session.summarySource = payload.source;
+      session.summaryModel = payload.model ?? null;
+      session.summaryCreatedAt = payload.createdAt;
+    }
+    emitSessionEvent(emit, sessionId, 'summary', payload);
+    storage.set(sessionSummaryKey(sessionId), payload);
   }
 
   async function handleRpc(payload: RpcPayload, responder: RpcResponder): Promise<void> {
@@ -680,6 +828,16 @@ function createHostRuntime(options: HostRuntimeOptions): HostRuntime {
         }
       }
 
+      if (
+        message.trim() &&
+        session.providerId !== 'claude' &&
+        !session.summaryRequested &&
+        !session.summarySeed
+      ) {
+        session.summarySeed = message;
+        session.summaryReasoning = '';
+      }
+
       const controller = new AbortController();
       const cwd = params.cwd ? resolveAppPathInternal(params.cwd) : session.cwd || basePath;
       const repoRoot = params.repoRoot
@@ -712,6 +870,27 @@ function createHostRuntime(options: HostRuntimeOptions): HostRuntime {
             if (sawError && event.type === 'final') {
               return;
             }
+            if (event.type === 'thinking' && typeof event.text === 'string') {
+              appendSummaryReasoning(session, event.text);
+              maybeStartPromptSummary({
+                sessionId,
+                session,
+                emit: current.emit,
+                trigger: 'reasoning',
+              });
+            }
+            if (
+              event.type === 'delta' ||
+              event.type === 'message' ||
+              event.type === 'final'
+            ) {
+              maybeStartPromptSummary({
+                sessionId,
+                session,
+                emit: current.emit,
+                trigger: 'output',
+              });
+            }
             emitSessionEvent(current.emit, sessionId, event.type, { ...event });
           },
         })
@@ -720,6 +899,7 @@ function createHostRuntime(options: HostRuntimeOptions): HostRuntime {
           if (!current || current.token !== runToken) return;
           if (result?.sessionId) {
             session.providerSessionId = result.sessionId;
+            void startClaudeLogSummary({ sessionId, session, emit: responder.emit });
           }
         })
         .catch((err: Error) => {
@@ -736,6 +916,9 @@ function createHostRuntime(options: HostRuntimeOptions): HostRuntime {
           if (current && current.token === runToken) {
             activeRuns.delete(sessionId);
           }
+          if (!session.summaryRequested && session.summarySeed) {
+            clearSummarySeed(session);
+          }
         });
 
       responder.reply(id, { accepted: true });
@@ -749,6 +932,10 @@ function createHostRuntime(options: HostRuntimeOptions): HostRuntime {
         activeRuns.delete(sessionId);
         run.controller.abort();
         emitSessionEvent(run.emit, sessionId, 'final', { cancelled: true });
+      }
+      const session = sessions.get(sessionId);
+      if (session && session.summarySeed && !session.summaryRequested) {
+        clearSummarySeed(session);
       }
       responder.reply(id, { cancelled: true });
       return;
@@ -948,6 +1135,29 @@ function createHostRuntime(options: HostRuntimeOptions): HostRuntime {
       return;
     }
 
+    if (method === 'acp.storage.get') {
+      recordCapability('storage.kv');
+      const key = typeof params.key === 'string' ? params.key : '';
+      if (!key) {
+        responder.error(id, 'AC_ERR_INVALID_ARGS', 'Storage key is required.');
+        return;
+      }
+      responder.reply(id, { value: storage.get(key) });
+      return;
+    }
+
+    if (method === 'acp.storage.set') {
+      recordCapability('storage.kv');
+      const key = typeof params.key === 'string' ? params.key : '';
+      if (!key) {
+        responder.error(id, 'AC_ERR_INVALID_ARGS', 'Storage key is required.');
+        return;
+      }
+      storage.set(key, params.value);
+      responder.reply(id, { ok: true });
+      return;
+    }
+
     if (method === 'acp.backend.start') {
       recordCapability('backend.run');
       if (!manifest?.backend) {
@@ -1052,6 +1262,7 @@ function createHostRuntime(options: HostRuntimeOptions): HostRuntime {
     handleRpc,
     flush: () => {
       observedTracker.flush();
+      storage.flush();
     },
   };
 }

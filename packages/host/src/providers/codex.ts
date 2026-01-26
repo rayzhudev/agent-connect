@@ -908,6 +908,7 @@ export function runCodexPrompt({
         let finalSessionId: string | null = null;
         let didFinalize = false;
         let sawError = false;
+        let pendingError: { message: string; providerDetail?: ProviderDetail } | null = null;
 
         const includeRaw = providerDetailLevel === 'raw';
         const buildProviderDetail = (
@@ -1036,6 +1037,9 @@ export function runCodexPrompt({
           const detailData: Record<string, unknown> = {};
           const threadId = ev.thread_id ?? ev.threadId;
           if (typeof threadId === 'string' && threadId) detailData.threadId = threadId;
+          if (normalized.type === 'error' && normalized.message) {
+            detailData.message = normalized.message;
+          }
           const providerDetail = buildProviderDetail(eventType || 'unknown', detailData, ev);
           let handled = false;
 
@@ -1092,14 +1096,18 @@ export function runCodexPrompt({
           }
 
           if (normalized.type === 'error') {
-            emitError(normalized.message || 'Codex run failed', providerDetail);
-            handled = true;
+            const message = normalized.message || 'Codex run failed';
+            pendingError = { message, providerDetail };
+            debugLog('Codex', 'event-error', { message });
           }
 
           if (isTerminalEvent(ev) && !didFinalize) {
             if (ev.type === 'turn.failed') {
-              const message = ev.error?.message;
-              emitError(typeof message === 'string' ? message : 'Codex run failed', providerDetail);
+              const message =
+                typeof ev.error?.message === 'string'
+                  ? ev.error.message
+                  : pendingError?.message;
+              emitError(message ?? 'Codex run failed', providerDetail);
               didFinalize = true;
               handled = true;
               return;
@@ -1126,7 +1134,8 @@ export function runCodexPrompt({
           if (!didFinalize) {
             if (code && code !== 0) {
               const hint = stderrLines.at(-1) || stdoutLines.at(-1) || '';
-              const suffix = hint ? `: ${hint}` : '';
+              const context = pendingError?.message || hint;
+              const suffix = context ? `: ${context}` : '';
               const fallback = mode === 'modern' && !sawJson && shouldFallbackToLegacy([
                 ...stderrLines,
                 ...stdoutLines,
@@ -1137,17 +1146,21 @@ export function runCodexPrompt({
                 stdout: stdoutLines,
                 fallback,
               });
-            if (fallback) {
-              attemptResolve({ sessionId: finalSessionId, fallback: true });
-              return;
+              if (fallback) {
+                attemptResolve({ sessionId: finalSessionId, fallback: true });
+                return;
+              }
+              emitError(`Codex exited with code ${code}${suffix}`, pendingError?.providerDetail);
+            } else if (!sawError) {
+              if (pendingError) {
+                emitError(pendingError.message, pendingError.providerDetail);
+              } else {
+                emitFinal(aggregated);
+              }
             }
-            emitError(`Codex exited with code ${code}${suffix}`);
-          } else if (!sawError) {
-            emitFinal(aggregated);
           }
-        }
-        attemptResolve({ sessionId: finalSessionId, fallback: false });
-      });
+          attemptResolve({ sessionId: finalSessionId, fallback: false });
+        });
 
         child.on('error', (err: Error) => {
           debugLog('Codex', 'spawn-error', { message: err?.message });
