@@ -5,21 +5,21 @@ export type SubscriptionCadence =
   | 'annual'
   | 'weekly'
   | 'daily'
-  | 'unknown'
+  | 'unknown';
 
 export type SubscriptionItem = {
-  name: string
-  amount: number
-  cadence: SubscriptionCadence
-  notes?: string
-  recommendation?: 'keep' | 'review' | 'cancel'
-  confidence?: number
-}
+  name: string;
+  amount: number;
+  cadence: SubscriptionCadence;
+  notes?: string;
+  recommendation?: 'keep' | 'review' | 'cancel';
+  confidence?: number;
+};
 
 export type AnalysisResult = {
-  recordWindowMonths?: number | null
-  summary?: string
-  subscriptions: SubscriptionItem[]
-  insights?: string[]
-  currency?: string
-}
+  recordWindowMonths?: number | null;
+  summary?: string;
+  subscriptions: SubscriptionItem[];
+  insights?: string[];
+  currency?: string;
+};

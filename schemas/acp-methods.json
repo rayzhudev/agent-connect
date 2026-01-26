@@ -230,6 +230,7 @@
         "sessionId": { "$ref": "#/$defs/SessionId" },
         "model": { "$ref": "#/$defs/ModelId" },
         "reasoningEffort": { "type": "string" },
+        "system": { "type": "string" },
         "providerSessionId": { "type": "string" },
         "cwd": { "type": "string" },
         "repoRoot": { "type": "string" },

@@ -117,9 +117,7 @@ export async function listModels(): Promise<ModelInfo[]> {
   });
 }
 
-export async function listRecentModels(
-  providerId?: ProviderId
-): Promise<ModelInfo[]> {
+export async function listRecentModels(providerId?: ProviderId): Promise<ModelInfo[]> {
   if (providerId && providerId !== 'claude') return [];
   const recent = await listClaudeRecentModels();
   return recent.filter((entry) => entry.provider === 'claude');

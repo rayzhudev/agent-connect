@@ -87,10 +87,7 @@ async function run() {
     const providers = await withTimeout(client.providers.list(), 'Providers list');
     if (!Array.isArray(providers)) throw new Error('Provider list failed.');
 
-    const session = await withTimeout(
-      client.sessions.create({ model: 'local' }),
-      'Session create'
-    );
+    const session = await withTimeout(client.sessions.create({ model: 'local' }), 'Session create');
     if (!session?.id) throw new Error('Session create failed.');
 
     const finalEvent = new Promise((resolve, reject) => {

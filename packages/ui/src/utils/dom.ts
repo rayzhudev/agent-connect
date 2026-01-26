@@ -16,20 +16,14 @@ export function parseCommaSeparated(raw: string): string[] {
 /**
  * Query a single element from a root with type assertion.
  */
-export function querySelector<T extends Element>(
-  root: ParentNode,
-  selector: string
-): T | null {
+export function querySelector<T extends Element>(root: ParentNode, selector: string): T | null {
   return root.querySelector<T>(selector);
 }
 
 /**
  * Query all elements from a root with type assertion.
  */
-export function querySelectorAll<T extends Element>(
-  root: ParentNode,
-  selector: string
-): T[] {
+export function querySelectorAll<T extends Element>(root: ParentNode, selector: string): T[] {
   return Array.from(root.querySelectorAll<T>(selector));
 }
 

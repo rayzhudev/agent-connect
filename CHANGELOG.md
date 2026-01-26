@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## 0.2.5
+
+- Generate session summaries via prompt-based flow for all providers.
+- Allow session summaries to update on later prompts.
+- Add per-session system prompts across providers (with resume support).
+
 ## 0.2.4
 
 - Prevent transient provider errors from cancelling retries for Codex and Cursor runs.

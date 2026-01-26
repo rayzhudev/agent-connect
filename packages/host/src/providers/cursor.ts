@@ -16,6 +16,7 @@ import {
   checkCommandVersion,
   commandExists,
   createLineParser,
+  applySystemPrompt,
   debugLog,
   logProviderSpawn,
   resolveWindowsCommand,
@@ -723,6 +724,7 @@ function extractErrorMessage(ev: CursorEvent): string | null {
 
 export function runCursorPrompt({
   prompt,
+  system,
   resumeSessionId,
   model,
   repoRoot,
@@ -751,7 +753,8 @@ export function runCursorPrompt({
       args.push('--endpoint', endpoint);
     }
 
-    args.push(prompt);
+    const composedPrompt = applySystemPrompt(system, prompt);
+    args.push(composedPrompt);
 
     logProviderSpawn({
       provider: 'cursor',
@@ -773,7 +776,7 @@ export function runCursorPrompt({
       endpoint: endpoint || null,
       resume: resumeSessionId || null,
       apiKeyConfigured: Boolean(getCursorApiKey().trim()),
-      promptChars: prompt.length,
+      promptChars: composedPrompt.length,
     });
 
     const child = spawn(command, args, {

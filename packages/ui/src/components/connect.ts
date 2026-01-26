@@ -315,8 +315,8 @@ export class AgentConnectConnect extends HTMLElement {
   private hasLocalConfig(): boolean {
     return Boolean(
       this.localConfig?.model ||
-        this.localConfig?.baseUrl ||
-        (Array.isArray(this.localConfig?.models) && this.localConfig.models.length)
+      this.localConfig?.baseUrl ||
+      (Array.isArray(this.localConfig?.models) && this.localConfig.models.length)
     );
   }
 
@@ -328,7 +328,11 @@ export class AgentConnectConnect extends HTMLElement {
         if (model) options.add(model);
       }
     }
-    return Array.from(options).map((id) => ({ id, provider: 'local' as ProviderId, displayName: id }));
+    return Array.from(options).map((id) => ({
+      id,
+      provider: 'local' as ProviderId,
+      displayName: id,
+    }));
   }
 
   private getFallbackProviders(): ProviderInfoWithPending[] {
@@ -341,7 +345,8 @@ export class AgentConnectConnect extends HTMLElement {
   }
 
   private populateLocalForm(): void {
-    const { localBaseInput, localModelInput, localKeyInput, localModelsInput } = this.elements ?? {};
+    const { localBaseInput, localModelInput, localKeyInput, localModelsInput } =
+      this.elements ?? {};
     if (!localBaseInput) return;
     localBaseInput.value = this.localConfig?.baseUrl || '';
     if (localModelInput) localModelInput.value = this.localConfig?.model || '';
@@ -398,8 +403,7 @@ export class AgentConnectConnect extends HTMLElement {
       const existing = new Map(this.state.providers.map((entry) => [entry.id, entry]));
       const initial = new Map(this.createInitialProviders().map((entry) => [entry.id, entry]));
       this.state.providers = providerIds.map((id) => {
-        const base =
-          listed.get(id) ||
+        const base = listed.get(id) ||
           existing.get(id) ||
           initial.get(id) || {
             id,
@@ -561,7 +565,10 @@ export class AgentConnectConnect extends HTMLElement {
     }
   }
 
-  private async waitForProviderLogin(providerId: ProviderId, providerName: string): Promise<boolean> {
+  private async waitForProviderLogin(
+    providerId: ProviderId,
+    providerName: string
+  ): Promise<boolean> {
     const client = await getClient();
     const startedAt = Date.now();
     this.loginPending.add(providerId);
@@ -882,7 +889,10 @@ export class AgentConnectConnect extends HTMLElement {
     return button;
   }
 
-  private buildUpdateButton(provider: ProviderInfoWithPending, loading: boolean): HTMLButtonElement {
+  private buildUpdateButton(
+    provider: ProviderInfoWithPending,
+    loading: boolean
+  ): HTMLButtonElement {
     const updateButton = document.createElement('button');
     updateButton.className = 'ac-button update icon';
     updateButton.type = 'button';
@@ -977,7 +987,9 @@ export class AgentConnectConnect extends HTMLElement {
       `.ac-provider-card[data-provider="${providerId}"]`
     );
     if (!card) return;
-    const button = card.querySelector('.ac-provider-actions .ac-button') as HTMLButtonElement | null;
+    const button = card.querySelector(
+      '.ac-provider-actions .ac-button'
+    ) as HTMLButtonElement | null;
     if (button) {
       button.disabled = loading;
       if (loading) {
@@ -993,7 +1005,10 @@ export class AgentConnectConnect extends HTMLElement {
     }
   }
 
-  private async ensureProviderReady(provider: ProviderInfo, providerName: string): Promise<boolean> {
+  private async ensureProviderReady(
+    provider: ProviderInfo,
+    providerName: string
+  ): Promise<boolean> {
     const client = await getClient();
     let needsLogin = !provider.loggedIn;
 
@@ -1002,9 +1017,7 @@ export class AgentConnectConnect extends HTMLElement {
       this.setProviderLoading(provider.id, true, 'Installing...');
       const installed = await client.providers.ensureInstalled(provider.id);
       if (!installed.installed) {
-        const pmInfo = installed.packageManager
-          ? ` Tried using ${installed.packageManager}.`
-          : '';
+        const pmInfo = installed.packageManager ? ` Tried using ${installed.packageManager}.` : '';
         this.setAlert({
           type: 'error',
           title: ERROR_MESSAGES.install_failed.title,
@@ -1184,7 +1197,9 @@ export class AgentConnectConnect extends HTMLElement {
     this.renderConnectedModels();
   }
 
-  private getReasoningEffortsForModel(modelId: string | null): Array<{ id: string; label?: string }> {
+  private getReasoningEffortsForModel(
+    modelId: string | null
+  ): Array<{ id: string; label?: string }> {
     if (!modelId) return [];
     const model = this.state.models.find((entry) => entry.id === modelId);
     if (!model || !Array.isArray(model.reasoningEfforts)) return [];

@@ -111,6 +111,7 @@ interface ChatCompletionResponse {
 
 export async function runLocalPrompt({
   prompt,
+  system,
   model,
   onEvent,
 }: RunPromptOptions): Promise<RunPromptResult> {
@@ -129,9 +130,16 @@ export async function runLocalPrompt({
     cwd: process.cwd(),
   });
 
+  const messages: Array<{ role: 'system' | 'user'; content: string }> = [];
+  const systemPrompt = typeof system === 'string' ? system.trim() : '';
+  if (systemPrompt) {
+    messages.push({ role: 'system', content: systemPrompt });
+  }
+  messages.push({ role: 'user', content: prompt });
+
   const payload = {
     model: resolvedModel,
-    messages: [{ role: 'user', content: prompt }],
+    messages,
     stream: false,
   };
 

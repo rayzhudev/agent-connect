@@ -35,6 +35,7 @@ agentconnect publish --app dist/app.zip --registry . --signature dist/app.sig.js
 ```
 
 This will:
+
 - Copy the zip into `apps/<app-id>/<version>/app.zip`
 - Write `manifest.json` next to it
 - Update `index.json`
@@ -50,12 +51,14 @@ agentconnect registry-verify --registry .
 Create a public GitHub repo (example: `agentconnect-registry`). Contributors open PRs and maintainers merge them. GitHub provides integrity via commit history, PR review, and CI checks.
 
 Recommended PR checks:
+
 - `agentconnect registry-verify --registry .`
 - Hash and signature verification
 
 ## Consuming the registry
 
 Hosts should:
+
 1. Fetch `index.json` from the repo.
 2. Verify hashes and signatures.
 3. Download app zips from the corresponding paths.

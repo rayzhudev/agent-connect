@@ -239,7 +239,10 @@ function fetchJson(url: string): Promise<unknown> {
 function formatClaudeDisplayName(modelId: string): string {
   const value = modelId.trim();
   if (!value.startsWith('claude-')) return value;
-  const parts = value.replace(/^claude-/, '').split('-').filter(Boolean);
+  const parts = value
+    .replace(/^claude-/, '')
+    .split('-')
+    .filter(Boolean);
   if (!parts.length) return value;
   const family = parts[0];
   const numeric = parts.slice(1).filter((entry) => /^\d+$/.test(entry));
@@ -344,9 +347,7 @@ function resolveClaudeLoginMethod(options?: ProviderLoginOptions): ClaudeLoginMe
   return 'claudeai';
 }
 
-function resolveClaudeLoginExperience(
-  options?: ProviderLoginOptions
-): ClaudeLoginExperience {
+function resolveClaudeLoginExperience(options?: ProviderLoginOptions): ClaudeLoginExperience {
   const raw =
     options?.loginExperience ??
     process.env.AGENTCONNECT_CLAUDE_LOGIN_EXPERIENCE ??
@@ -629,8 +630,7 @@ async function checkClaudeCliStatus(): Promise<ClaudeCliLoginStatus> {
       const record = parsed as Record<string, unknown>;
       const type = typeof record.type === 'string' ? record.type : '';
       if (type === 'system' && record.subtype === 'init') {
-        const source =
-          typeof record.apiKeySource === 'string' ? record.apiKeySource : undefined;
+        const source = typeof record.apiKeySource === 'string' ? record.apiKeySource : undefined;
         if (source) apiKeySource = source;
       }
       if (type === 'result') {
@@ -657,10 +657,7 @@ async function checkClaudeCliStatus(): Promise<ClaudeCliLoginStatus> {
               : typeof message?.error === 'string'
                 ? message.error
                 : '';
-          if (
-            isClaudeAuthErrorText(text) ||
-            (errorText && isClaudeAuthErrorText(errorText))
-          ) {
+          if (isClaudeAuthErrorText(text) || (errorText && isClaudeAuthErrorText(errorText))) {
             authError = authError ?? (text || errorText);
           } else if (text.trim()) {
             sawAssistant = true;
@@ -892,9 +889,7 @@ export async function updateClaude(): Promise<ProviderStatus> {
   return getClaudeStatus();
 }
 
-export async function loginClaude(
-  options?: ProviderLoginOptions
-): Promise<{ loggedIn: boolean }> {
+export async function loginClaude(options?: ProviderLoginOptions): Promise<{ loggedIn: boolean }> {
   const login = buildLoginCommand('AGENTCONNECT_CLAUDE_LOGIN', DEFAULT_LOGIN);
   if (login.command) {
     const command = resolveWindowsCommand(login.command);
@@ -1110,6 +1105,7 @@ function extractResultText(msg: ClaudeMessage): string | null {
 
 export function runClaudePrompt({
   prompt,
+  system,
   resumeSessionId,
   model,
   cwd,
@@ -1126,6 +1122,10 @@ export function runClaudePrompt({
       '--permission-mode',
       'bypassPermissions',
     ];
+    const systemPrompt = typeof system === 'string' ? system.trim() : '';
+    if (systemPrompt) {
+      args.push('--append-system-prompt', systemPrompt);
+    }
     const modelValue = mapClaudeModel(model);
     if (modelValue) {
       args.push('--model', modelValue);
@@ -1230,7 +1230,11 @@ export function runClaudePrompt({
         const index = typeof msg.event.index === 'number' ? msg.event.index : undefined;
         const block = msg.event.content_block;
         if (evType === 'content_block_start' && block && typeof index === 'number') {
-          if (block.type === 'tool_use' || block.type === 'server_tool_use' || block.type === 'mcp_tool_use') {
+          if (
+            block.type === 'tool_use' ||
+            block.type === 'server_tool_use' ||
+            block.type === 'mcp_tool_use'
+          ) {
             toolBlocks.set(index, { id: block.id, name: block.name });
             emit({
               type: 'tool_call',

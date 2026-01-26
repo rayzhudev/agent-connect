@@ -47,7 +47,12 @@ export type ProviderDetail = {
 };
 
 export type SessionEvent =
-  | { type: 'delta'; text: string; providerSessionId?: string | null; providerDetail?: ProviderDetail }
+  | {
+      type: 'delta';
+      text: string;
+      providerSessionId?: string | null;
+      providerDetail?: ProviderDetail;
+    }
   | {
       type: 'final';
       text: string;
@@ -125,8 +130,7 @@ export type SessionEvent =
       provider?: ProviderId;
       providerSessionId?: string | null;
       providerDetail: ProviderDetail;
-    }
-  ;
+    };
 
 export type ProviderLoginOptions = {
   baseUrl?: string;
@@ -168,6 +172,7 @@ export type SessionSendOptions = {
 export type SessionResumeOptions = {
   model?: string;
   reasoningEffort?: string;
+  system?: string;
   providerSessionId?: string | null;
   cwd?: string;
   repoRoot?: string;
@@ -199,7 +204,10 @@ export interface AgentConnectClient {
 
   providers: {
     list(): Promise<ProviderInfo[]>;
-    status(provider: ProviderId, options?: { fast?: boolean; force?: boolean }): Promise<ProviderInfo>;
+    status(
+      provider: ProviderId,
+      options?: { fast?: boolean; force?: boolean }
+    ): Promise<ProviderInfo>;
     ensureInstalled(provider: ProviderId): Promise<InstallResult>;
     update(provider: ProviderId): Promise<ProviderInfo>;
     login(provider: ProviderId, options?: ProviderLoginOptions): Promise<{ loggedIn: boolean }>;
@@ -618,9 +626,7 @@ class AgentConnectClientImpl implements AgentConnectClient {
       const provider =
         typeof data?.provider === 'string' ? (data.provider as ProviderId) : undefined;
       const source =
-        data?.source === 'prompt' || data?.source === 'claude-log'
-          ? data.source
-          : undefined;
+        data?.source === 'prompt' || data?.source === 'claude-log' ? data.source : undefined;
       const model = typeof data?.model === 'string' ? data.model : undefined;
       const createdAt = typeof data?.createdAt === 'string' ? data.createdAt : undefined;
       return {

@@ -169,12 +169,12 @@ export interface SessionEvent {
     | 'usage'
     | 'status'
     | 'error'
-  | 'raw_line'
-  | 'message'
-  | 'thinking'
-  | 'tool_call'
-  | 'detail'
-  | 'summary';
+    | 'raw_line'
+    | 'message'
+    | 'thinking'
+    | 'tool_call'
+    | 'detail'
+    | 'summary';
   text?: string;
   message?: string;
   line?: string;
@@ -202,6 +202,7 @@ export interface SessionEvent {
 
 export interface RunPromptOptions {
   prompt: string;
+  system?: string;
   resumeSessionId?: string | null;
   model?: string;
   reasoningEffort?: string | null;
@@ -247,8 +248,8 @@ export interface SessionState {
   cwd?: string;
   repoRoot?: string;
   providerDetailLevel?: ProviderDetailLevel;
+  systemPrompt?: string;
   summaryRequested?: boolean;
-  claudeSummaryWatch?: boolean;
   summarySeed?: string;
   summaryReasoning?: string;
   summary?: string | null;

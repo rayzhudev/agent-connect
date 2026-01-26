@@ -1,7 +1,3 @@
-import fs from 'fs';
-import { promises as fsp } from 'fs';
-import os from 'os';
-import path from 'path';
 import type { Provider, ProviderId } from './types.js';
 
 export type SummarySource = 'prompt' | 'claude-log';
@@ -62,7 +58,10 @@ export function buildSummaryPrompt(userPrompt: string, reasoning?: string): stri
 }
 
 export function sanitizeSummary(raw: string): string {
-  const normalized = raw.replace(/[\r\n]+/g, ' ').replace(/\s+/g, ' ').trim();
+  const normalized = raw
+    .replace(/[\r\n]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
   const stripped = normalized.replace(/^["']+|["']+$/g, '').trim();
   const cleaned = stripped.replace(/[.!?]+$/g, '').trim();
   if (!cleaned) return '';
@@ -130,75 +129,4 @@ export async function runSummaryPrompt(options: {
     if (result) return result;
   }
   return attempt(null);
-}
-
-function buildClaudeProjectKey(basePath: string): string {
-  const resolved = path.resolve(basePath);
-  const normalized = resolved.split(path.sep).filter(Boolean).join('-');
-  return `-${normalized}`;
-}
-
-function resolveClaudeSummaryPath(basePath: string, sessionId: string): string | null {
-  if (!sessionId) return null;
-  const root = process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude');
-  const projectKey = buildClaudeProjectKey(basePath);
-  return path.join(root, 'projects', projectKey, `${sessionId}.jsonl`);
-}
-
-async function readClaudeSummaryFile(filePath: string): Promise<string | null> {
-  if (!fs.existsSync(filePath)) return null;
-  try {
-    const raw = await fsp.readFile(filePath, 'utf8');
-    let latest: string | null = null;
-    for (const line of raw.split(/\r?\n/)) {
-      if (!line.trim()) continue;
-      let parsed: unknown;
-      try {
-        parsed = JSON.parse(line);
-      } catch {
-        continue;
-      }
-      if (!parsed || typeof parsed !== 'object') continue;
-      const record = parsed as Record<string, unknown>;
-      if (record.type !== 'summary') continue;
-      const summary = record.summary;
-      if (typeof summary === 'string' && summary.trim()) {
-        latest = summary.trim();
-      }
-    }
-    return latest ? sanitizeSummary(latest) : null;
-  } catch {
-    return null;
-  }
-}
-
-export async function pollClaudeSummary(options: {
-  basePath: string;
-  sessionId: string;
-  timeoutMs?: number;
-  intervalMs?: number;
-}): Promise<string | null> {
-  const { basePath, sessionId, timeoutMs = 30000, intervalMs = 1500 } = options;
-  const filePath = resolveClaudeSummaryPath(basePath, sessionId);
-  if (!filePath) return null;
-
-  const start = Date.now();
-  let lastMtime = 0;
-
-  while (Date.now() - start < timeoutMs) {
-    try {
-      const stat = await fsp.stat(filePath);
-      const mtime = stat.mtimeMs;
-      if (mtime !== lastMtime) {
-        lastMtime = mtime;
-        const summary = await readClaudeSummaryFile(filePath);
-        if (summary) return summary;
-      }
-    } catch {
-      // ignore
-    }
-    await new Promise((resolve) => setTimeout(resolve, intervalMs));
-  }
-
-  return null;
 }

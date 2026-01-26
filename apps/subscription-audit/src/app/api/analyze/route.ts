@@ -1,16 +1,16 @@
-import { NextResponse } from 'next/server'
-import { AgentConnect } from '@agentconnect/sdk'
-import { ensureAgentConnectHost } from '@/lib/agentconnect-host'
-import { extractFiles } from '@/lib/file-extract'
-import type { AnalysisResult } from '@/lib/types'
+import { NextResponse } from 'next/server';
+import { AgentConnect } from '@agentconnect/sdk';
+import { ensureAgentConnectHost } from '@/lib/agentconnect-host';
+import { extractFiles } from '@/lib/file-extract';
+import type { AnalysisResult } from '@/lib/types';
 
-export const runtime = 'nodejs'
+export const runtime = 'nodejs';
 
-const MAX_CHARS = 18000
+const MAX_CHARS = 18000;
 
 function trimText(text: string, maxChars = MAX_CHARS): string {
-  if (text.length <= maxChars) return text
-  return text.slice(0, maxChars) + '\n[trimmed]'
+  if (text.length <= maxChars) return text;
+  return text.slice(0, maxChars) + '\n[trimmed]';
 }
 
 function buildPrompt(payload: string) {
@@ -24,28 +24,28 @@ function buildPrompt(payload: string) {
     'JSON only. No markdown, no extra text.',
     '',
     payload,
-  ].join('\n')
+  ].join('\n');
 }
 
 function extractJson(text: string): AnalysisResult | null {
-  if (!text) return null
-  const trimmed = text.trim()
+  if (!text) return null;
+  const trimmed = text.trim();
   try {
-    return JSON.parse(trimmed)
+    return JSON.parse(trimmed);
   } catch {
-    const match = trimmed.match(/\{[\s\S]*\}/)
-    if (!match) return null
+    const match = trimmed.match(/\{[\s\S]*\}/);
+    if (!match) return null;
     try {
-      return JSON.parse(match[0])
+      return JSON.parse(match[0]);
     } catch {
-      return null
+      return null;
     }
   }
 }
 
 function normalizeResult(result: AnalysisResult | null): AnalysisResult {
   if (!result) {
-    return { subscriptions: [], summary: 'No subscriptions found.' }
+    return { subscriptions: [], summary: 'No subscriptions found.' };
   }
   return {
     recordWindowMonths: result.recordWindowMonths ?? null,
@@ -53,56 +53,57 @@ function normalizeResult(result: AnalysisResult | null): AnalysisResult {
     insights: Array.isArray(result.insights) ? result.insights : [],
     subscriptions: Array.isArray(result.subscriptions) ? result.subscriptions : [],
     currency: result.currency || 'USD',
-  }
+  };
 }
 
 export async function POST(request: Request) {
-  const formData = await request.formData()
-  const model = typeof formData.get('model') === 'string' ? String(formData.get('model')) : 'default'
-  const files = formData.getAll('files').filter((entry): entry is File => entry instanceof File)
+  const formData = await request.formData();
+  const model =
+    typeof formData.get('model') === 'string' ? String(formData.get('model')) : 'default';
+  const files = formData.getAll('files').filter((entry): entry is File => entry instanceof File);
 
   if (!files.length) {
-    return NextResponse.json({ error: 'No files uploaded.' }, { status: 400 })
+    return NextResponse.json({ error: 'No files uploaded.' }, { status: 400 });
   }
 
-  const extracted = await extractFiles(files)
+  const extracted = await extractFiles(files);
   const payload = extracted
-    .map(file => `File: ${file.name}\n${file.text}`)
-    .filter(entry => entry.trim().length > 0)
-    .join('\n\n')
+    .map((file) => `File: ${file.name}\n${file.text}`)
+    .filter((entry) => entry.trim().length > 0)
+    .join('\n\n');
 
   if (!payload.trim()) {
-    return NextResponse.json({ error: 'Unable to extract text from files.' }, { status: 400 })
+    return NextResponse.json({ error: 'Unable to extract text from files.' }, { status: 400 });
   }
 
-  await ensureAgentConnectHost()
-  const client = await AgentConnect.connect()
-  const session = await client.sessions.create({ model })
+  await ensureAgentConnectHost();
+  const client = await AgentConnect.connect();
+  const session = await client.sessions.create({ model });
 
-  let finalText = ''
+  let finalText = '';
   try {
     await new Promise<void>((resolve, reject) => {
       const offFinal = session.on('final', (event) => {
-        finalText = event.text || ''
-        offFinal()
-        offError()
-        resolve()
-      })
+        finalText = event.text || '';
+        offFinal();
+        offError();
+        resolve();
+      });
       const offError = session.on('error', (event) => {
-        offFinal()
-        offError()
-        reject(new Error(event.message || 'Agent error'))
-      })
-      session.send(buildPrompt(trimText(payload))).catch(reject)
-    })
+        offFinal();
+        offError();
+        reject(new Error(event.message || 'Agent error'));
+      });
+      session.send(buildPrompt(trimText(payload))).catch(reject);
+    });
   } finally {
-    await session.close().catch(() => {})
+    await session.close().catch(() => {});
   }
 
-  const parsed = extractJson(finalText)
-  const normalized = normalizeResult(parsed)
+  const parsed = extractJson(finalText);
+  const normalized = normalizeResult(parsed);
   return NextResponse.json({
     ...normalized,
     rawResponse: finalText,
-  })
+  });
 }

@@ -10,10 +10,10 @@ const nextConfig = {
         ...(config.resolve.alias || {}),
         bufferutil: false,
         'utf-8-validate': false,
-      }
+      };
     }
-    return config
+    return config;
   },
-}
+};
 
-module.exports = nextConfig
+module.exports = nextConfig;

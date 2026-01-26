@@ -198,9 +198,10 @@ function renderMessages() {
 }
 
 function addMessage(role, text) {
-  const id = typeof crypto !== 'undefined' && crypto.randomUUID
-    ? crypto.randomUUID()
-    : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  const id =
+    typeof crypto !== 'undefined' && crypto.randomUUID
+      ? crypto.randomUUID()
+      : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
   const message = { id, role, text };
   messages.push(message);
   renderMessages();
@@ -235,7 +236,11 @@ function updateEditorMeta() {
 
 async function ensureSession() {
   if (!selectedModel) return null;
-  if (session && sessionModel === selectedModel && sessionReasoningEffort === selectedReasoningEffort) {
+  if (
+    session &&
+    sessionModel === selectedModel &&
+    sessionReasoningEffort === selectedReasoningEffort
+  ) {
     return session;
   }
   if (session) {

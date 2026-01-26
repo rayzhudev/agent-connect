@@ -18,9 +18,7 @@ async function prefetchProviderData(): Promise<void> {
   try {
     const client = await getClient();
     const providers = await client.providers.list();
-    await Promise.allSettled(
-      providers.map((provider) => client.models.list(provider.id))
-    );
+    await Promise.allSettled(providers.map((provider) => client.models.list(provider.id)));
   } catch {
     // Ignore background prefetch errors
   }

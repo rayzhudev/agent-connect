@@ -21,16 +21,13 @@ export function logProviderSpawn(options: {
 }): void {
   if (!SPAWN_LOG_ENABLED) return;
   const redacted = [...options.args];
-  const idx =
-    typeof options.redactIndex === 'number' ? options.redactIndex : redacted.length - 1;
+  const idx = typeof options.redactIndex === 'number' ? options.redactIndex : redacted.length - 1;
   if (idx >= 0 && idx < redacted.length) {
     redacted[idx] = '[prompt]';
   }
   const cwd = options.cwd || process.cwd();
   const formatted = formatShellCommand(options.command, redacted);
-  const fullCommand = cwd
-    ? `${formatShellCommand('cd', [cwd])} && ${formatted}`
-    : formatted;
+  const fullCommand = cwd ? `${formatShellCommand('cd', [cwd])} && ${formatted}` : formatted;
   console.log(`AgentConnect: ${fullCommand}`);
 }
 
@@ -44,11 +41,7 @@ function formatShellArg(value: string): string {
   return `'${value.replace(/'/g, `'\\''`)}'`;
 }
 
-export function debugLog(
-  scope: string,
-  message: string,
-  details?: Record<string, unknown>
-): void {
+export function debugLog(scope: string, message: string, details?: Record<string, unknown>): void {
   if (!DEBUG_ENABLED) return;
   let suffix = '';
   if (details) {
@@ -59,6 +52,12 @@ export function debugLog(
     }
   }
   console.log(`[AgentConnect][${scope}] ${message}${suffix}`);
+}
+
+export function applySystemPrompt(system: string | undefined, prompt: string): string {
+  const trimmed = typeof system === 'string' ? system.trim() : '';
+  if (!trimmed) return prompt;
+  return `<<SYSTEM>>\n${trimmed}\n<</SYSTEM>>\n\n<<USER>>\n${prompt}`;
 }
 
 export interface SplitCommandResult {
@@ -266,7 +265,6 @@ export function runCommand(
   });
 }
 
-
 export function createLineParser(onLine: (line: string) => void): (chunk: Buffer | string) => void {
   let buffer = '';
   return (chunk: Buffer | string) => {
@@ -358,9 +356,7 @@ export function getInstallCommand(
   }
 }
 
-export async function buildInstallCommandAuto(
-  packageName: string
-): Promise<InstallCommandResult> {
+export async function buildInstallCommandAuto(packageName: string): Promise<InstallCommandResult> {
   const pm = await detectPackageManager();
   const cmd = getInstallCommand(pm, packageName);
   return { ...cmd, packageManager: pm };

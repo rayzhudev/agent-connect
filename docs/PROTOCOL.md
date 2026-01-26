@@ -413,17 +413,90 @@ export type ModelInfo = {
 };
 
 export type SessionEvent =
-  | { type: 'delta'; text: string; providerSessionId?: string | null; providerDetail?: ProviderDetail }
-  | { type: 'final'; text: string; cancelled?: boolean; providerSessionId?: string | null; providerDetail?: ProviderDetail }
-  | { type: 'usage'; usage: Record<string, number>; providerSessionId?: string | null; providerDetail?: ProviderDetail }
-  | { type: 'status'; status: 'thinking' | 'idle' | 'error'; error?: string; providerSessionId?: string | null; providerDetail?: ProviderDetail }
-  | { type: 'error'; message: string; cancelled?: boolean; providerSessionId?: string | null; providerDetail?: ProviderDetail }
-  | { type: 'raw_line'; line: string; providerSessionId?: string | null; providerDetail?: ProviderDetail }
-  | { type: 'message'; provider?: ProviderId; role: 'system' | 'user' | 'assistant'; content: string; contentParts?: unknown; providerSessionId?: string | null; providerDetail?: ProviderDetail }
-  | { type: 'thinking'; provider?: ProviderId; phase: 'delta' | 'start' | 'completed' | 'error'; text?: string; timestampMs?: number; providerSessionId?: string | null; providerDetail?: ProviderDetail }
-  | { type: 'tool_call'; provider?: ProviderId; name?: string; callId?: string; input?: unknown; output?: unknown; phase?: 'delta' | 'start' | 'completed' | 'error'; providerSessionId?: string | null; providerDetail?: ProviderDetail }
-  | { type: 'summary'; summary: string; source?: 'prompt' | 'claude-log'; provider?: ProviderId; model?: string | null; createdAt?: string; providerSessionId?: string | null; providerDetail?: ProviderDetail }
-  | { type: 'detail'; provider?: ProviderId; providerSessionId?: string | null; providerDetail: ProviderDetail };
+  | {
+      type: 'delta';
+      text: string;
+      providerSessionId?: string | null;
+      providerDetail?: ProviderDetail;
+    }
+  | {
+      type: 'final';
+      text: string;
+      cancelled?: boolean;
+      providerSessionId?: string | null;
+      providerDetail?: ProviderDetail;
+    }
+  | {
+      type: 'usage';
+      usage: Record<string, number>;
+      providerSessionId?: string | null;
+      providerDetail?: ProviderDetail;
+    }
+  | {
+      type: 'status';
+      status: 'thinking' | 'idle' | 'error';
+      error?: string;
+      providerSessionId?: string | null;
+      providerDetail?: ProviderDetail;
+    }
+  | {
+      type: 'error';
+      message: string;
+      cancelled?: boolean;
+      providerSessionId?: string | null;
+      providerDetail?: ProviderDetail;
+    }
+  | {
+      type: 'raw_line';
+      line: string;
+      providerSessionId?: string | null;
+      providerDetail?: ProviderDetail;
+    }
+  | {
+      type: 'message';
+      provider?: ProviderId;
+      role: 'system' | 'user' | 'assistant';
+      content: string;
+      contentParts?: unknown;
+      providerSessionId?: string | null;
+      providerDetail?: ProviderDetail;
+    }
+  | {
+      type: 'thinking';
+      provider?: ProviderId;
+      phase: 'delta' | 'start' | 'completed' | 'error';
+      text?: string;
+      timestampMs?: number;
+      providerSessionId?: string | null;
+      providerDetail?: ProviderDetail;
+    }
+  | {
+      type: 'tool_call';
+      provider?: ProviderId;
+      name?: string;
+      callId?: string;
+      input?: unknown;
+      output?: unknown;
+      phase?: 'delta' | 'start' | 'completed' | 'error';
+      providerSessionId?: string | null;
+      providerDetail?: ProviderDetail;
+    }
+  | {
+      type: 'summary';
+      summary: string;
+      source?: 'prompt' | 'claude-log';
+      provider?: ProviderId;
+      model?: string | null;
+      createdAt?: string;
+      providerSessionId?: string | null;
+      providerDetail?: ProviderDetail;
+    }
+  | {
+      type: 'detail';
+      provider?: ProviderId;
+      providerSessionId?: string | null;
+      providerDetail: ProviderDetail;
+    };
 
 export type ProviderDetail = {
   eventType: string;
@@ -470,6 +543,7 @@ export type SessionSendOptions = {
 export type SessionResumeOptions = {
   model?: string;
   reasoningEffort?: string;
+  system?: string;
   providerSessionId?: string | null;
   cwd?: string;
   repoRoot?: string;
@@ -497,7 +571,10 @@ export interface AgentConnectClient {
 
   providers: {
     list(): Promise<ProviderInfo[]>;
-    status(provider: ProviderId, options?: { fast?: boolean; force?: boolean }): Promise<ProviderInfo>;
+    status(
+      provider: ProviderId,
+      options?: { fast?: boolean; force?: boolean }
+    ): Promise<ProviderInfo>;
     ensureInstalled(provider: ProviderId): Promise<{ installed: boolean; version?: string }>;
     login(provider: ProviderId, options?: ProviderLoginOptions): Promise<{ loggedIn: boolean }>;
     logout(provider: ProviderId): Promise<{ loggedIn: boolean }>;

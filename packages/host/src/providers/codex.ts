@@ -21,6 +21,7 @@ import {
   checkCommandVersion,
   commandExists,
   createLineParser,
+  applySystemPrompt,
   debugLog,
   logProviderSpawn,
   resolveWindowsCommand,
@@ -102,9 +103,9 @@ function compareSemver(a: [number, number, number], b: [number, number, number])
 
 async function fetchLatestNpmVersion(pkg: string): Promise<string | null> {
   const encoded = encodeURIComponent(pkg);
-  const data = (await fetchJson(`https://registry.npmjs.org/${encoded}`)) as
-    | { 'dist-tags'?: { latest?: string } }
-    | null;
+  const data = (await fetchJson(`https://registry.npmjs.org/${encoded}`)) as {
+    'dist-tags'?: { latest?: string };
+  } | null;
   if (!data || typeof data !== 'object') return null;
   const latest = data['dist-tags']?.latest;
   return typeof latest === 'string' ? latest : null;
@@ -115,7 +116,9 @@ async function fetchBrewFormulaVersion(formula: string): Promise<string | null> 
   const result = await runCommand('brew', ['info', '--json=v2', formula]);
   if (result.code !== 0) return null;
   try {
-    const parsed = JSON.parse(result.stdout) as { formulae?: Array<{ versions?: { stable?: string } }> };
+    const parsed = JSON.parse(result.stdout) as {
+      formulae?: Array<{ versions?: { stable?: string } }>;
+    };
     const version = parsed?.formulae?.[0]?.versions?.stable;
     return typeof version === 'string' ? version : null;
   } catch {
@@ -291,10 +294,7 @@ function buildCodexExecArgs(options: {
   }
   args.push('--yolo');
   const summarySetting = process.env.AGENTCONNECT_CODEX_REASONING_SUMMARY;
-  const summary =
-    summarySetting && summarySetting.trim()
-      ? summarySetting.trim()
-      : 'detailed';
+  const summary = summarySetting && summarySetting.trim() ? summarySetting.trim() : 'detailed';
   const summaryDisabled = ['0', 'false', 'off', 'none'].includes(summary.toLowerCase());
   if (!summaryDisabled) {
     args.push('--config', `model_reasoning_summary=${summary}`);
@@ -397,7 +397,9 @@ export async function getCodexStatus(): Promise<ProviderStatus> {
     const status = buildStatusCommand('AGENTCONNECT_CODEX_STATUS', DEFAULT_STATUS);
     if (status.command) {
       const statusCommand = resolveWindowsCommand(status.command);
-      const result = await runCommand(statusCommand, status.args, { env: { ...process.env, CI: '1' } });
+      const result = await runCommand(statusCommand, status.args, {
+        env: { ...process.env, CI: '1' },
+      });
       const output = `${result.stdout}\n${result.stderr}`.toLowerCase();
       if (
         output.includes('not logged in') ||
@@ -833,6 +835,7 @@ export async function listCodexModels(): Promise<ModelInfo[]> {
 
 export function runCodexPrompt({
   prompt,
+  system,
   resumeSessionId,
   model,
   reasoningEffort,
@@ -849,10 +852,13 @@ export function runCodexPrompt({
     const runDir = resolvedCwd || resolvedRepoRoot || process.cwd();
     const cdTarget = resolvedRepoRoot || resolvedCwd || '.';
 
-    const runAttempt = (mode: CodexExecMode): Promise<{ sessionId: string | null; fallback: boolean }> =>
+    const composedPrompt = applySystemPrompt(system, prompt);
+    const runAttempt = (
+      mode: CodexExecMode
+    ): Promise<{ sessionId: string | null; fallback: boolean }> =>
       new Promise((attemptResolve) => {
         const args = buildCodexExecArgs({
-          prompt,
+          prompt: composedPrompt,
           cdTarget,
           resumeSessionId,
           model,
@@ -1072,11 +1078,15 @@ export function runCodexPrompt({
           } else if (normalized.type === 'item.completed') {
             const item = normalized.item;
             if (item && typeof item === 'object') {
-              const itemDetail = buildProviderDetail('item.completed', {
-                itemType: (item as CodexItem).type,
-                itemId: (item as CodexItem).id,
-                status: (item as CodexItem).status,
-              }, item);
+              const itemDetail = buildProviderDetail(
+                'item.completed',
+                {
+                  itemType: (item as CodexItem).type,
+                  itemId: (item as CodexItem).id,
+                  status: (item as CodexItem).status,
+                },
+                item
+              );
               if (item.type === 'command_execution' && typeof item.aggregated_output === 'string') {
                 emit({ type: 'delta', text: item.aggregated_output, providerDetail: itemDetail });
               }
@@ -1104,9 +1114,7 @@ export function runCodexPrompt({
           if (isTerminalEvent(ev) && !didFinalize) {
             if (ev.type === 'turn.failed') {
               const message =
-                typeof ev.error?.message === 'string'
-                  ? ev.error.message
-                  : pendingError?.message;
+                typeof ev.error?.message === 'string' ? ev.error.message : pendingError?.message;
               emitError(message ?? 'Codex run failed', providerDetail);
               didFinalize = true;
               handled = true;
@@ -1136,10 +1144,10 @@ export function runCodexPrompt({
               const hint = stderrLines.at(-1) || stdoutLines.at(-1) || '';
               const context = pendingError?.message || hint;
               const suffix = context ? `: ${context}` : '';
-              const fallback = mode === 'modern' && !sawJson && shouldFallbackToLegacy([
-                ...stderrLines,
-                ...stdoutLines,
-              ]);
+              const fallback =
+                mode === 'modern' &&
+                !sawJson &&
+                shouldFallbackToLegacy([...stderrLines, ...stdoutLines]);
               debugLog('Codex', 'exit', {
                 code,
                 stderr: stderrLines,

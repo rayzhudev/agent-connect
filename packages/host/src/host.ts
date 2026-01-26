@@ -17,14 +17,18 @@ import type {
   InstallResult,
   ProviderLoginOptions,
 } from './types.js';
-import { listModels, listRecentModels, providers, resolveProviderForModel } from './providers/index.js';
+import {
+  listModels,
+  listRecentModels,
+  providers,
+  resolveProviderForModel,
+} from './providers/index.js';
 import { debugLog, setSpawnLogging } from './providers/utils.js';
 import { createObservedTracker } from './observed.js';
 import { createStorage } from './storage.js';
 import {
   buildSummaryPrompt,
   getSummaryModel,
-  pollClaudeSummary,
   runSummaryPrompt,
   type SummaryPayload,
 } from './summary.js';
@@ -126,8 +130,7 @@ function buildProviderList(statuses: Record<string, ProviderStatus>): ProviderIn
 
 function resolveLoginExperience(mode: HostMode): 'embedded' | 'terminal' {
   const raw =
-    process.env.AGENTCONNECT_LOGIN_EXPERIENCE ||
-    process.env.AGENTCONNECT_CLAUDE_LOGIN_EXPERIENCE;
+    process.env.AGENTCONNECT_LOGIN_EXPERIENCE || process.env.AGENTCONNECT_CLAUDE_LOGIN_EXPERIENCE;
   if (raw) {
     const normalized = raw.trim().toLowerCase();
     if (normalized === 'terminal' || normalized === 'manual') return 'terminal';
@@ -234,6 +237,17 @@ function createHostRuntime(options: HostRuntimeOptions): HostRuntime {
     recordCapability(`model.${providerId}`);
   }
 
+  function resolveSystemPrompt(providerId: ProviderId, input?: unknown): string | undefined {
+    if (typeof input === 'string') {
+      const trimmed = input.trim();
+      return trimmed ? trimmed : undefined;
+    }
+    const envKey = `AGENTCONNECT_SYSTEM_PROMPT_${providerId.toUpperCase()}`;
+    const envValue = process.env[envKey];
+    if (envValue && envValue.trim()) return envValue.trim();
+    return undefined;
+  }
+
   const SUMMARY_REASONING_MAX_LINES = 3;
   const SUMMARY_REASONING_MAX_CHARS = 280;
 
@@ -277,56 +291,46 @@ function createHostRuntime(options: HostRuntimeOptions): HostRuntime {
     emit: RpcResponder['emit'];
   }): Promise<void> {
     const { sessionId, session, message, reasoning, emit } = options;
-    if (session.providerId === 'claude') return;
     if (session.summaryRequested) return;
     session.summaryRequested = true;
-    const provider = providers[session.providerId];
-    if (!provider) return;
-    const prompt = buildSummaryPrompt(message, reasoning);
-    const summaryModel = getSummaryModel(session.providerId);
-    const cwd = session.cwd || basePath;
-    const repoRoot = session.repoRoot || basePath;
-    const result = await runSummaryPrompt({
-      provider,
-      prompt,
-      model: summaryModel,
-      cwd,
-      repoRoot,
-    });
-    if (!result) return;
-    persistSummary(emit, sessionId, {
-      summary: result.summary,
-      source: 'prompt',
-      provider: session.providerId,
-      model: result.model ?? null,
-      createdAt: new Date().toISOString(),
-    }, session);
-  }
-
-  async function startClaudeLogSummary(options: {
-    sessionId: string;
-    session: SessionState;
-    emit: RpcResponder['emit'];
-  }): Promise<void> {
-    const { sessionId, session, emit } = options;
-    if (session.providerId !== 'claude') return;
-    if (session.claudeSummaryWatch) return;
-    const providerSessionId = session.providerSessionId;
-    if (!providerSessionId) return;
-    session.claudeSummaryWatch = true;
-    const projectRoot = session.repoRoot || session.cwd || basePath;
-    const summary = await pollClaudeSummary({
-      basePath: projectRoot,
-      sessionId: providerSessionId,
-    });
-    if (!summary) return;
-    persistSummary(emit, sessionId, {
-      summary,
-      source: 'claude-log',
-      provider: 'claude',
-      model: session.model ?? null,
-      createdAt: new Date().toISOString(),
-    }, session);
+    try {
+      const provider = providers[session.providerId];
+      if (!provider) return;
+      const prompt = buildSummaryPrompt(message, reasoning);
+      const summaryModel = getSummaryModel(session.providerId);
+      const cwd = session.cwd || basePath;
+      const repoRoot = session.repoRoot || basePath;
+      const result = await runSummaryPrompt({
+        provider,
+        prompt,
+        model: summaryModel,
+        cwd,
+        repoRoot,
+      });
+      if (!result) return;
+      persistSummary(
+        emit,
+        sessionId,
+        {
+          summary: result.summary,
+          source: 'prompt',
+          provider: session.providerId,
+          model: result.model ?? null,
+          createdAt: new Date().toISOString(),
+        },
+        session
+      );
+    } finally {
+      session.summaryRequested = false;
+      if (session.summarySeed) {
+        maybeStartPromptSummary({
+          sessionId,
+          session,
+          emit,
+          trigger: 'output',
+        });
+      }
+    }
   }
 
   async function getCachedStatus(
@@ -450,7 +454,6 @@ function createHostRuntime(options: HostRuntimeOptions): HostRuntime {
     trigger: 'reasoning' | 'output';
   }): void {
     const { sessionId, session, emit, trigger } = options;
-    if (session.providerId === 'claude') return;
     if (session.summaryRequested) return;
     if (!session.summarySeed) return;
     if (trigger === 'reasoning' && !session.summaryReasoning) return;
@@ -609,11 +612,7 @@ function createHostRuntime(options: HostRuntimeOptions): HostRuntime {
           providerId,
           message: err instanceof Error ? err.message : String(err),
         });
-        responder.error(
-          id,
-          'AC_ERR_INTERNAL',
-          (err as Error)?.message || 'Update failed'
-        );
+        responder.error(id, 'AC_ERR_INTERNAL', (err as Error)?.message || 'Update failed');
       }
       return;
     }
@@ -648,11 +647,7 @@ function createHostRuntime(options: HostRuntimeOptions): HostRuntime {
         invalidateStatus(provider.id);
         responder.reply(id, result);
       } catch (err) {
-        responder.error(
-          id,
-          'AC_ERR_INTERNAL',
-          (err as Error)?.message || 'Provider login failed.'
-        );
+        responder.error(id, 'AC_ERR_INTERNAL', (err as Error)?.message || 'Provider login failed.');
       }
       return;
     }
@@ -725,6 +720,7 @@ function createHostRuntime(options: HostRuntimeOptions): HostRuntime {
         model = await pickDefaultModel(rawProvider);
       }
       const reasoningEffort = (params.reasoningEffort as string) || null;
+      const systemPrompt = resolveSystemPrompt(providerId, params.system);
       const cwd = params.cwd ? resolveAppPathInternal(params.cwd) : undefined;
       const repoRoot = params.repoRoot ? resolveAppPathInternal(params.repoRoot) : undefined;
       const providerDetailLevel = (params.providerDetailLevel as string) || undefined;
@@ -741,6 +737,7 @@ function createHostRuntime(options: HostRuntimeOptions): HostRuntime {
         reasoningEffort,
         cwd,
         repoRoot,
+        systemPrompt,
         providerDetailLevel:
           providerDetailLevel === 'raw' || providerDetailLevel === 'minimal'
             ? providerDetailLevel
@@ -765,6 +762,9 @@ function createHostRuntime(options: HostRuntimeOptions): HostRuntime {
       }
       if (params.repoRoot) {
         existing.repoRoot = resolveAppPathInternal(params.repoRoot);
+      }
+      if ('system' in params) {
+        existing.systemPrompt = resolveSystemPrompt(existing.providerId, params.system);
       }
       if (params.providerDetailLevel) {
         const level = String(params.providerDetailLevel);
@@ -828,12 +828,7 @@ function createHostRuntime(options: HostRuntimeOptions): HostRuntime {
         }
       }
 
-      if (
-        message.trim() &&
-        session.providerId !== 'claude' &&
-        !session.summaryRequested &&
-        !session.summarySeed
-      ) {
+      if (message.trim()) {
         session.summarySeed = message;
         session.summaryReasoning = '';
       }
@@ -860,6 +855,7 @@ function createHostRuntime(options: HostRuntimeOptions): HostRuntime {
           repoRoot,
           cwd,
           providerDetailLevel,
+          system: session.systemPrompt,
           signal: controller.signal,
           onEvent: (event) => {
             const current = activeRuns.get(sessionId);
@@ -879,11 +875,7 @@ function createHostRuntime(options: HostRuntimeOptions): HostRuntime {
                 trigger: 'reasoning',
               });
             }
-            if (
-              event.type === 'delta' ||
-              event.type === 'message' ||
-              event.type === 'final'
-            ) {
+            if (event.type === 'delta' || event.type === 'message' || event.type === 'final') {
               maybeStartPromptSummary({
                 sessionId,
                 session,
@@ -899,7 +891,6 @@ function createHostRuntime(options: HostRuntimeOptions): HostRuntime {
           if (!current || current.token !== runToken) return;
           if (result?.sessionId) {
             session.providerSessionId = result.sessionId;
-            void startClaudeLogSummary({ sessionId, session, emit: responder.emit });
           }
         })
         .catch((err: Error) => {
@@ -956,11 +947,7 @@ function createHostRuntime(options: HostRuntimeOptions): HostRuntime {
         const content = await fsp.readFile(filePath, encoding);
         responder.reply(id, { content, encoding });
       } catch (err) {
-        responder.error(
-          id,
-          'AC_ERR_FS_READ',
-          (err as Error)?.message || 'Failed to read file.'
-        );
+        responder.error(id, 'AC_ERR_FS_READ', (err as Error)?.message || 'Failed to read file.');
       }
       return;
     }
@@ -979,11 +966,7 @@ function createHostRuntime(options: HostRuntimeOptions): HostRuntime {
         const bytes = Buffer.byteLength(String(content), encoding);
         responder.reply(id, { bytes });
       } catch (err) {
-        responder.error(
-          id,
-          'AC_ERR_FS_WRITE',
-          (err as Error)?.message || 'Failed to write file.'
-        );
+        responder.error(id, 'AC_ERR_FS_WRITE', (err as Error)?.message || 'Failed to write file.');
       }
       return;
     }
@@ -1034,11 +1017,7 @@ function createHostRuntime(options: HostRuntimeOptions): HostRuntime {
           mtime: stat.mtime.toISOString(),
         });
       } catch (err) {
-        responder.error(
-          id,
-          'AC_ERR_FS_STAT',
-          (err as Error)?.message || 'Failed to stat file.'
-        );
+        responder.error(id, 'AC_ERR_FS_STAT', (err as Error)?.message || 'Failed to stat file.');
       }
       return;
     }
@@ -1090,11 +1069,7 @@ function createHostRuntime(options: HostRuntimeOptions): HostRuntime {
         const success = child ? child.kill(signal) : process.kill(pid, signal);
         responder.reply(id, { success: Boolean(success) });
       } catch (err) {
-        responder.error(
-          id,
-          'AC_ERR_PROCESS',
-          (err as Error)?.message || 'Failed to kill process.'
-        );
+        responder.error(id, 'AC_ERR_PROCESS', (err as Error)?.message || 'Failed to kill process.');
       }
       return;
     }
@@ -1126,11 +1101,7 @@ function createHostRuntime(options: HostRuntimeOptions): HostRuntime {
         });
         responder.reply(id, { status: res.status, headers, body });
       } catch (err) {
-        responder.error(
-          id,
-          'AC_ERR_NET',
-          (err as Error)?.message || 'Network request failed.'
-        );
+        responder.error(id, 'AC_ERR_NET', (err as Error)?.message || 'Network request failed.');
       }
       return;
     }
