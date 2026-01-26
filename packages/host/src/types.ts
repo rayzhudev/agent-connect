@@ -195,7 +195,7 @@ export interface SessionEvent {
   timestampMs?: number;
   cancelled?: boolean;
   summary?: string;
-  source?: 'prompt' | 'claude-log';
+  source?: 'prompt';
   model?: string | null;
   createdAt?: string;
 }
@@ -253,7 +253,7 @@ export interface SessionState {
   summarySeed?: string;
   summaryReasoning?: string;
   summary?: string | null;
-  summarySource?: 'prompt' | 'claude-log';
+  summarySource?: 'prompt';
   summaryModel?: string | null;
   summaryCreatedAt?: string;
 }

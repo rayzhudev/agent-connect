@@ -1,6 +1,6 @@
 import type { Provider, ProviderId } from './types.js';
 
-export type SummarySource = 'prompt' | 'claude-log';
+export type SummarySource = 'prompt';
 
 export type SummaryPayload = {
   summary: string;

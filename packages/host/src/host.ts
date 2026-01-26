@@ -475,9 +475,6 @@ function createHostRuntime(options: HostRuntimeOptions): HostRuntime {
   ): void {
     if (!payload.summary) return;
     if (session) {
-      if (session.summarySource === 'claude-log' && payload.source === 'prompt') {
-        return;
-      }
       if (session.summary === payload.summary && session.summarySource === payload.source) {
         return;
       }

@@ -166,7 +166,7 @@ Summary events are optional and may arrive asynchronously:
     "type": "summary",
     "data": {
       "summary": "Build a chat summary pipeline for agent sessions",
-      "source": "prompt" | "claude-log",
+      "source": "prompt",
       "provider": "claude" | "codex" | "cursor" | "local",
       "model": "model-id",
       "createdAt": "2026-01-25T18:12:00.000Z"
@@ -484,7 +484,7 @@ export type SessionEvent =
   | {
       type: 'summary';
       summary: string;
-      source?: 'prompt' | 'claude-log';
+      source?: 'prompt';
       provider?: ProviderId;
       model?: string | null;
       createdAt?: string;

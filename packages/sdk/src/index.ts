@@ -63,7 +63,7 @@ export type SessionEvent =
   | {
       type: 'summary';
       summary: string;
-      source?: 'prompt' | 'claude-log';
+      source?: 'prompt';
       provider?: ProviderId;
       model?: string | null;
       createdAt?: string;
@@ -625,8 +625,7 @@ class AgentConnectClientImpl implements AgentConnectClient {
       if (!summary) return null;
       const provider =
         typeof data?.provider === 'string' ? (data.provider as ProviderId) : undefined;
-      const source =
-        data?.source === 'prompt' || data?.source === 'claude-log' ? data.source : undefined;
+      const source = data?.source === 'prompt' ? data.source : undefined;
       const model = typeof data?.model === 'string' ? data.model : undefined;
       const createdAt = typeof data?.createdAt === 'string' ? data.createdAt : undefined;
       return {

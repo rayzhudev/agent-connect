@@ -227,7 +227,7 @@ export type SessionEvent =
   | {
       type: 'summary';
       summary: string;
-      source?: 'prompt' | 'claude-log';
+      source?: 'prompt';
       provider?: ProviderId;
       model?: string | null;
       createdAt?: string;
