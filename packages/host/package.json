@@ -1,6 +1,6 @@
 {
   "name": "@agentconnect/host",
-  "version": "0.2.5",
+  "version": "0.2.6",
   "license": "MIT",
   "type": "module",
   "homepage": "https://github.com/rayzhudev/agent-connect",
