@@ -554,6 +554,18 @@ interface CursorEvent {
   token_usage?: TokenUsage;
   tokenUsage?: TokenUsage;
   tokens?: TokenUsage;
+  context_usage?: ContextUsage;
+  contextUsage?: ContextUsage;
+  context_window?: number;
+  contextWindow?: number;
+  context_tokens?: number;
+  contextTokens?: number;
+  context_cached_tokens?: number;
+  contextCachedTokens?: number;
+  context_remaining_tokens?: number;
+  contextRemainingTokens?: number;
+  context_truncated?: boolean;
+  contextTruncated?: boolean;
 }
 
 function extractSessionId(ev: CursorEvent): string | null {
@@ -572,19 +584,44 @@ interface TokenUsage {
   completionTokens?: number;
   total_tokens?: number;
   totalTokens?: number;
+  cached_input_tokens?: number;
+  cachedInputTokens?: number;
+  reasoning_tokens?: number;
+  reasoningTokens?: number;
+}
+
+interface ContextUsage {
+  context_window?: number;
+  contextWindow?: number;
+  context_tokens?: number;
+  contextTokens?: number;
+  context_cached_tokens?: number;
+  contextCachedTokens?: number;
+  context_remaining_tokens?: number;
+  contextRemainingTokens?: number;
+  context_truncated?: boolean;
+  contextTruncated?: boolean;
 }
 
 interface ExtractedUsage {
   input_tokens?: number;
   output_tokens?: number;
   total_tokens?: number;
+  cached_input_tokens?: number;
+  reasoning_tokens?: number;
 }
 
 function extractUsage(ev: CursorEvent): ExtractedUsage | null {
   const usage = ev.usage ?? ev.token_usage ?? ev.tokenUsage ?? ev.tokens;
   if (!usage || typeof usage !== 'object') return null;
-  const toNumber = (v: unknown): number | undefined =>
-    typeof v === 'number' && Number.isFinite(v) ? v : undefined;
+  const toNumber = (v: unknown): number | undefined => {
+    if (typeof v === 'number' && Number.isFinite(v)) return v;
+    if (typeof v === 'string' && v.trim()) {
+      const parsed = Number(v);
+      return Number.isFinite(parsed) ? parsed : undefined;
+    }
+    return undefined;
+  };
   const input = toNumber(
     usage.input_tokens ?? usage.prompt_tokens ?? usage.inputTokens ?? usage.promptTokens
   );
@@ -592,10 +629,87 @@ function extractUsage(ev: CursorEvent): ExtractedUsage | null {
     usage.output_tokens ?? usage.completion_tokens ?? usage.outputTokens ?? usage.completionTokens
   );
   const total = toNumber(usage.total_tokens ?? usage.totalTokens);
+  const cached = toNumber(usage.cached_input_tokens ?? usage.cachedInputTokens);
+  const reasoning = toNumber(usage.reasoning_tokens ?? usage.reasoningTokens);
   const out: ExtractedUsage = {};
   if (input !== undefined) out.input_tokens = input;
   if (output !== undefined) out.output_tokens = output;
   if (total !== undefined) out.total_tokens = total;
+  if (cached !== undefined) out.cached_input_tokens = cached;
+  if (reasoning !== undefined) out.reasoning_tokens = reasoning;
+  return Object.keys(out).length ? out : null;
+}
+
+interface ExtractedContextUsage {
+  context_window?: number;
+  context_tokens?: number;
+  context_cached_tokens?: number;
+  context_remaining_tokens?: number;
+  context_truncated?: boolean;
+}
+
+function extractContextUsage(
+  ev: CursorEvent,
+  usage: ExtractedUsage | null
+): ExtractedContextUsage | null {
+  const context = ev.context_usage ?? ev.contextUsage;
+  const toNumber = (v: unknown): number | undefined => {
+    if (typeof v === 'number' && Number.isFinite(v)) return v;
+    if (typeof v === 'string' && v.trim()) {
+      const parsed = Number(v);
+      return Number.isFinite(parsed) ? parsed : undefined;
+    }
+    return undefined;
+  };
+  const toBoolean = (v: unknown): boolean | undefined =>
+    typeof v === 'boolean' ? v : undefined;
+  const contextWindow = toNumber(
+    context?.context_window ?? context?.contextWindow ?? ev.context_window ?? ev.contextWindow
+  );
+  let contextTokens = toNumber(
+    context?.context_tokens ?? context?.contextTokens ?? ev.context_tokens ?? ev.contextTokens
+  );
+  let contextCachedTokens = toNumber(
+    context?.context_cached_tokens ??
+      context?.contextCachedTokens ??
+      ev.context_cached_tokens ??
+      ev.contextCachedTokens
+  );
+  let contextRemainingTokens = toNumber(
+    context?.context_remaining_tokens ??
+      context?.contextRemainingTokens ??
+      ev.context_remaining_tokens ??
+      ev.contextRemainingTokens
+  );
+  const contextTruncated = toBoolean(
+    context?.context_truncated ?? context?.contextTruncated ?? ev.context_truncated ?? ev.contextTruncated
+  );
+  if (contextTokens === undefined) {
+    if (
+      usage?.input_tokens !== undefined &&
+      usage?.cached_input_tokens !== undefined
+    ) {
+      contextTokens = usage.input_tokens + usage.cached_input_tokens;
+    } else if (usage?.input_tokens !== undefined) {
+      contextTokens = usage.input_tokens;
+    }
+  }
+  if (contextCachedTokens === undefined && usage?.cached_input_tokens !== undefined) {
+    contextCachedTokens = usage.cached_input_tokens;
+  }
+  if (
+    contextRemainingTokens === undefined &&
+    contextWindow !== undefined &&
+    contextTokens !== undefined
+  ) {
+    contextRemainingTokens = Math.max(0, contextWindow - contextTokens);
+  }
+  const out: ExtractedContextUsage = {};
+  if (contextWindow !== undefined) out.context_window = contextWindow;
+  if (contextTokens !== undefined) out.context_tokens = contextTokens;
+  if (contextCachedTokens !== undefined) out.context_cached_tokens = contextCachedTokens;
+  if (contextRemainingTokens !== undefined) out.context_remaining_tokens = contextRemainingTokens;
+  if (contextTruncated !== undefined) out.context_truncated = contextTruncated;
   return Object.keys(out).length ? out : null;
 }
 
@@ -935,8 +1049,14 @@ export function runCursorPrompt({
       if (usage) {
         emit({
           type: 'usage',
-          inputTokens: usage.input_tokens,
-          outputTokens: usage.output_tokens,
+          usage,
+        });
+      }
+      const contextUsage = extractContextUsage(ev, usage);
+      if (contextUsage) {
+        emit({
+          type: 'context_usage',
+          contextUsage,
         });
       }
 

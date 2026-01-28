@@ -40,6 +40,7 @@ export function buildSummaryPrompt(userPrompt: string, reasoning?: string): stri
   const clippedReasoning = reasoning?.trim() ? clipText(reasoning, REASONING_MAX_CHARS) : '';
   const lines = [
     'You write ultra-short task summaries for a chat list.',
+    'Do not run commands or edit files; only write the summary.',
     `Summarize the task in ${Math.max(6, SUMMARY_MAX_WORDS - 4)}-${SUMMARY_MAX_WORDS} words.`,
     'Capture the task and outcome; include key file/component/tech if present.',
     'Use a specific action verb; avoid vague verbs like "help" or "work on".',
@@ -55,6 +56,29 @@ export function buildSummaryPrompt(userPrompt: string, reasoning?: string): stri
     lines.push('', 'Initial reasoning (first lines):', clippedReasoning);
   }
   return lines.join('\n');
+}
+
+export function buildSummaryPromptWithOverride(
+  template: string,
+  userPrompt: string,
+  reasoning?: string
+): string {
+  const trimmedTemplate = template.trim();
+  if (!trimmedTemplate) return buildSummaryPrompt(userPrompt, reasoning);
+  const clipped = clipText(userPrompt.trim(), 1200);
+  const clippedReasoning = reasoning?.trim() ? clipText(reasoning, REASONING_MAX_CHARS) : '';
+  const hasMessage = trimmedTemplate.includes('{{message}}');
+  const hasReasoning = trimmedTemplate.includes('{{reasoning}}');
+  let prompt = trimmedTemplate;
+  if (hasMessage) prompt = prompt.replaceAll('{{message}}', clipped);
+  if (hasReasoning) prompt = prompt.replaceAll('{{reasoning}}', clippedReasoning);
+  if (!hasMessage) {
+    prompt = `${prompt}\n\nUser request:\n${clipped}`;
+  }
+  if (clippedReasoning && !hasReasoning) {
+    prompt = `${prompt}\n\nInitial reasoning (first lines):\n${clippedReasoning}`;
+  }
+  return prompt;
 }
 
 export function sanitizeSummary(raw: string): string {

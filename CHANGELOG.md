@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## 0.2.6
+
+- Normalize token and context usage across providers, including cached and context window fields.
+- Emit context usage events alongside token usage for richer telemetry.
+- Handle non-streaming assistant message events in demo/template apps.
+- Add summary controls (auto once per session, force per message, custom prompt).
+- Clarify summary prompt safety (no commands or file edits).
+
 ## 0.2.5
 
 - Generate session summaries via prompt-based flow for all providers.

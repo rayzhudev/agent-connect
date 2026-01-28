@@ -140,6 +140,22 @@ export type ModelInfo = {
   defaultReasoningEffort?: string;
 };
 
+export type TokenUsage = {
+  input_tokens?: number;
+  output_tokens?: number;
+  total_tokens?: number;
+  cached_input_tokens?: number;
+  reasoning_tokens?: number;
+};
+
+export type ContextUsage = {
+  context_window?: number;
+  context_tokens?: number;
+  context_cached_tokens?: number;
+  context_remaining_tokens?: number;
+  context_truncated?: boolean;
+};
+
 export type ProviderLoginOptions = {
   baseUrl?: string;
   apiKey?: string;
@@ -165,7 +181,13 @@ export type SessionEvent =
     }
   | {
       type: 'usage';
-      usage: Record<string, number>;
+      usage: TokenUsage;
+      providerSessionId?: string | null;
+      providerDetail?: ProviderDetail;
+    }
+  | {
+      type: 'context_usage';
+      contextUsage: ContextUsage;
       providerSessionId?: string | null;
       providerDetail?: ProviderDetail;
     }
@@ -241,6 +263,11 @@ export type ProviderDetail = {
   raw?: unknown;
 };
 
+export type SummaryOptions = {
+  mode?: 'auto' | 'off' | 'force';
+  prompt?: string;
+};
+
 export type SessionCreateOptions = {
   model?: string;
   provider?: ProviderId;
@@ -253,6 +280,7 @@ export type SessionCreateOptions = {
   maxTokens?: number;
   topP?: number;
   providerDetailLevel?: 'minimal' | 'raw';
+  summary?: SummaryOptions;
 };
 
 export type SessionSendOptions = {
@@ -260,6 +288,7 @@ export type SessionSendOptions = {
   cwd?: string;
   repoRoot?: string;
   providerDetailLevel?: 'minimal' | 'raw';
+  summary?: SummaryOptions;
 };
 
 export type SessionResumeOptions = {
@@ -270,8 +299,14 @@ export type SessionResumeOptions = {
   cwd?: string;
   repoRoot?: string;
   providerDetailLevel?: 'minimal' | 'raw';
+  summary?: SummaryOptions;
 };
 ```
+
+Summary behavior:
+- `auto` generates a summary for the first message in a session, then stops.
+- `force` generates a summary for the current message even if auto already ran.
+- `off` disables summaries.
 
 ## Client API
 

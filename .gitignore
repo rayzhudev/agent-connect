@@ -40,3 +40,4 @@ tmp/
 **/.agentconnect/observed-capabilities.json
 apps/**/expanded_draft.txt
 apps/modal-only/
+apps/usage-events-demo/

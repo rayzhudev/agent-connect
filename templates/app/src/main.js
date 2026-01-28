@@ -109,6 +109,7 @@ let selectedReasoningEffort = null;
 let selectedMode = MODES[0]?.id ?? 'rewrite';
 let activeOutput = '';
 let isBusy = false;
+let runFinalized = false;
 let sessionUnsubs = [];
 let history = [];
 const HISTORY_KEY = 'agentconnect-app-history';
@@ -286,6 +287,13 @@ async function ensureSession() {
       setOutput(activeOutput);
       finalizeRun();
     }),
+    session.on('message', (event) => {
+      if (event.type !== 'message') return;
+      if (event.role !== 'assistant') return;
+      activeOutput = event.content || '';
+      setOutput(activeOutput);
+      finalizeRun();
+    }),
     session.on('error', (event) => {
       if (event.type !== 'error') return;
       setOutput(`Error: ${event.message}`);
@@ -296,6 +304,8 @@ async function ensureSession() {
 }
 
 function finalizeRun() {
+  if (runFinalized) return;
+  runFinalized = true;
   setBusy(false);
   setStatus('Idle');
   if (activeOutput.trim()) {
@@ -377,6 +387,7 @@ async function handleRun() {
     return;
   }
   setBusy(true);
+  runFinalized = false;
   activeOutput = '';
   setOutput('');
   setStatus('Working...');
@@ -384,6 +395,7 @@ async function handleRun() {
     const current = await ensureSession();
     await current.send(buildPrompt());
   } catch (err) {
+    runFinalized = true;
     setBusy(false);
     setStatus('Error');
     setOutput(formatRunError(err));

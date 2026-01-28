@@ -28,6 +28,7 @@ import { createObservedTracker } from './observed.js';
 import { createStorage } from './storage.js';
 import {
   buildSummaryPrompt,
+  buildSummaryPromptWithOverride,
   getSummaryModel,
   runSummaryPrompt,
   type SummaryPayload,
@@ -223,6 +224,35 @@ function createHostRuntime(options: HostRuntimeOptions): HostRuntime {
     }
   }
 
+  function normalizeSummaryMode(value: unknown): 'auto' | 'off' | 'force' | undefined {
+    const raw = typeof value === 'string' ? value.trim().toLowerCase() : '';
+    if (raw === 'auto' || raw === 'off' || raw === 'force') return raw;
+    return undefined;
+  }
+
+  function normalizeSummaryPrompt(value: unknown): string | undefined {
+    if (typeof value !== 'string') return undefined;
+    const trimmed = value.trim();
+    return trimmed ? trimmed : undefined;
+  }
+
+  function resolveSummaryMode(
+    session: SessionState,
+    requested?: 'auto' | 'off' | 'force'
+  ): 'auto' | 'off' | 'force' {
+    if (requested) return requested;
+    return session.summaryMode ?? 'auto';
+  }
+
+  function resolveEffectiveSummaryMode(
+    session: SessionState,
+    requested?: 'auto' | 'off' | 'force'
+  ): 'auto' | 'off' | 'force' {
+    const mode = resolveSummaryMode(session, requested);
+    if (mode === 'auto' && session.summaryAutoUsed) return 'off';
+    return mode;
+  }
+
   function recordCapability(capability: string): void {
     observedTracker.record(capability);
   }
@@ -281,6 +311,8 @@ function createHostRuntime(options: HostRuntimeOptions): HostRuntime {
   function clearSummarySeed(session: SessionState): void {
     session.summarySeed = undefined;
     session.summaryReasoning = undefined;
+    session.summaryNextMode = undefined;
+    session.summaryNextPrompt = undefined;
   }
 
   async function startPromptSummary(options: {
@@ -288,15 +320,20 @@ function createHostRuntime(options: HostRuntimeOptions): HostRuntime {
     session: SessionState;
     message: string;
     reasoning?: string;
+    summaryPrompt?: string;
+    mode?: 'auto' | 'off' | 'force';
     emit: RpcResponder['emit'];
   }): Promise<void> {
-    const { sessionId, session, message, reasoning, emit } = options;
+    const { sessionId, session, message, reasoning, summaryPrompt, mode, emit } = options;
     if (session.summaryRequested) return;
     session.summaryRequested = true;
+    let completed = false;
     try {
       const provider = providers[session.providerId];
       if (!provider) return;
-      const prompt = buildSummaryPrompt(message, reasoning);
+      const prompt = summaryPrompt
+        ? buildSummaryPromptWithOverride(summaryPrompt, message, reasoning)
+        : buildSummaryPrompt(message, reasoning);
       const summaryModel = getSummaryModel(session.providerId);
       const cwd = session.cwd || basePath;
       const repoRoot = session.repoRoot || basePath;
@@ -320,8 +357,12 @@ function createHostRuntime(options: HostRuntimeOptions): HostRuntime {
         },
         session
       );
+      completed = true;
     } finally {
       session.summaryRequested = false;
+      if (!completed && mode === 'auto') {
+        session.summaryAutoUsed = true;
+      }
       if (session.summarySeed) {
         maybeStartPromptSummary({
           sessionId,
@@ -454,13 +495,24 @@ function createHostRuntime(options: HostRuntimeOptions): HostRuntime {
     trigger: 'reasoning' | 'output';
   }): void {
     const { sessionId, session, emit, trigger } = options;
+    const mode = resolveEffectiveSummaryMode(session, session.summaryNextMode);
+    if (mode === 'off') return;
     if (session.summaryRequested) return;
     if (!session.summarySeed) return;
     if (trigger === 'reasoning' && !session.summaryReasoning) return;
     const message = session.summarySeed;
     const reasoning = session.summaryReasoning;
+    const summaryPrompt = session.summaryNextPrompt ?? session.summaryPrompt;
     clearSummarySeed(session);
-    void startPromptSummary({ sessionId, session, message, reasoning, emit });
+    void startPromptSummary({
+      sessionId,
+      session,
+      message,
+      reasoning,
+      summaryPrompt,
+      mode,
+      emit,
+    });
   }
 
   function sessionSummaryKey(sessionId: string): string {
@@ -482,6 +534,7 @@ function createHostRuntime(options: HostRuntimeOptions): HostRuntime {
       session.summarySource = payload.source;
       session.summaryModel = payload.model ?? null;
       session.summaryCreatedAt = payload.createdAt;
+      session.summaryAutoUsed = true;
     }
     emitSessionEvent(emit, sessionId, 'summary', payload);
     storage.set(sessionSummaryKey(sessionId), payload);
@@ -726,6 +779,12 @@ function createHostRuntime(options: HostRuntimeOptions): HostRuntime {
       } else {
         recordProviderCapability(providerId);
       }
+      const summaryMode = normalizeSummaryMode(
+        (params.summary as { mode?: string } | undefined)?.mode
+      );
+      const summaryPrompt = normalizeSummaryPrompt(
+        (params.summary as { prompt?: string } | undefined)?.prompt
+      );
       sessions.set(sessionId, {
         id: sessionId,
         providerId,
@@ -739,6 +798,9 @@ function createHostRuntime(options: HostRuntimeOptions): HostRuntime {
           providerDetailLevel === 'raw' || providerDetailLevel === 'minimal'
             ? providerDetailLevel
             : undefined,
+        summaryMode: summaryMode === 'force' ? 'auto' : summaryMode ?? 'auto',
+        summaryPrompt,
+        summaryAutoUsed: false,
       });
       responder.reply(id, { sessionId });
       return;
@@ -767,6 +829,20 @@ function createHostRuntime(options: HostRuntimeOptions): HostRuntime {
         const level = String(params.providerDetailLevel);
         if (level === 'raw' || level === 'minimal') {
           existing.providerDetailLevel = level;
+        }
+      }
+      if ('summary' in params) {
+        const summaryMode = normalizeSummaryMode(
+          (params.summary as { mode?: string } | undefined)?.mode
+        );
+        const summaryPrompt = normalizeSummaryPrompt(
+          (params.summary as { prompt?: string } | undefined)?.prompt
+        );
+        if (summaryMode) {
+          existing.summaryMode = summaryMode === 'force' ? 'auto' : summaryMode;
+        }
+        if (summaryPrompt !== undefined) {
+          existing.summaryPrompt = summaryPrompt;
         }
       }
       if (!existing.model && typeof params.model === 'string' && params.model.trim()) {
@@ -825,7 +901,18 @@ function createHostRuntime(options: HostRuntimeOptions): HostRuntime {
         }
       }
 
-      if (message.trim()) {
+      const summaryMode = resolveEffectiveSummaryMode(
+        session,
+        normalizeSummaryMode((params.summary as { mode?: string } | undefined)?.mode)
+      );
+      const summaryPrompt = normalizeSummaryPrompt(
+        (params.summary as { prompt?: string } | undefined)?.prompt
+      );
+      session.summaryNextMode = summaryMode;
+      if (summaryPrompt !== undefined) {
+        session.summaryNextPrompt = summaryPrompt;
+      }
+      if (summaryMode !== 'off' && message.trim()) {
         session.summarySeed = message;
         session.summaryReasoning = '';
       }

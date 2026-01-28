@@ -293,6 +293,14 @@ async function sendPrompt(rawPrompt) {
   const cleanup = () => {
     while (unsubs.length) unsubs.pop()();
   };
+  let finished = false;
+  const finalize = () => {
+    if (finished) return;
+    finished = true;
+    chatBusy = false;
+    updateBusyState();
+    cleanup();
+  };
 
   unsubs.push(
     activeSession.on('delta', (ev) => {
@@ -305,9 +313,16 @@ async function sendPrompt(rawPrompt) {
     activeSession.on('final', (ev) => {
       if (ev.text) buffer = ev.text;
       updateMessage(assistantId, buffer || '');
-      chatBusy = false;
-      updateBusyState();
-      cleanup();
+      finalize();
+    })
+  );
+
+  unsubs.push(
+    activeSession.on('message', (ev) => {
+      if (ev.role !== 'assistant') return;
+      buffer = ev.content || '';
+      updateMessage(assistantId, buffer || '');
+      finalize();
     })
   );
 
@@ -317,9 +332,7 @@ async function sendPrompt(rawPrompt) {
         removeMessage(assistantId);
       }
       setError(ev.message || 'Agent error.');
-      chatBusy = false;
-      updateBusyState();
-      cleanup();
+      finalize();
     })
   );
 
@@ -328,9 +341,7 @@ async function sendPrompt(rawPrompt) {
       removeMessage(assistantId);
     }
     setError(err?.message || 'Failed to send prompt.');
-    chatBusy = false;
-    updateBusyState();
-    cleanup();
+    finalize();
   });
 }
 

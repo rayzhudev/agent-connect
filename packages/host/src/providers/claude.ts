@@ -1016,11 +1016,20 @@ interface ClaudeMessage {
   type?: string;
   session_id?: string;
   sessionId?: string;
+  modelUsage?: Record<string, unknown>;
+  context_management?: unknown;
+  usage?: Record<string, unknown>;
+  context_usage?: Record<string, unknown>;
+  contextUsage?: Record<string, unknown>;
   message?: {
     session_id?: string;
     sessionId?: string;
     content?: Array<{ type?: string; text?: string }>;
     role?: string;
+    modelUsage?: Record<string, unknown>;
+    usage?: Record<string, unknown>;
+    context_usage?: Record<string, unknown>;
+    contextUsage?: Record<string, unknown>;
   };
   event?: {
     type?: string;
@@ -1040,9 +1049,217 @@ interface ClaudeMessage {
       thinking?: string;
       signature?: string;
     };
+    usage?: Record<string, unknown>;
+    context_usage?: Record<string, unknown>;
+    contextUsage?: Record<string, unknown>;
   };
-  delta?: { text?: string };
-  result?: string;
+  delta?: { text?: string; usage?: Record<string, unknown> };
+  result?: string | Record<string, unknown>;
+}
+
+interface ExtractedUsage {
+  input_tokens?: number;
+  output_tokens?: number;
+  total_tokens?: number;
+  cached_input_tokens?: number;
+  reasoning_tokens?: number;
+}
+
+interface ExtractedContextUsage {
+  context_window?: number;
+  context_tokens?: number;
+  context_cached_tokens?: number;
+  context_remaining_tokens?: number;
+  context_truncated?: boolean;
+}
+
+function extractUsageFromValue(value: unknown): ExtractedUsage | null {
+  if (!value || typeof value !== 'object') return null;
+  const usage = value as Record<string, unknown>;
+  const toNumber = (v: unknown): number | undefined => {
+    if (typeof v === 'number' && Number.isFinite(v)) return v;
+    if (typeof v === 'string' && v.trim()) {
+      const parsed = Number(v);
+      return Number.isFinite(parsed) ? parsed : undefined;
+    }
+    return undefined;
+  };
+  const input = toNumber(
+    usage.input_tokens ?? usage.prompt_tokens ?? usage.inputTokens ?? usage.promptTokens
+  );
+  const output = toNumber(
+    usage.output_tokens ?? usage.completion_tokens ?? usage.outputTokens ?? usage.completionTokens
+  );
+  const total = toNumber(usage.total_tokens ?? usage.totalTokens);
+  let cached = toNumber(usage.cached_input_tokens ?? usage.cachedInputTokens);
+  const cacheCreation = toNumber(
+    usage.cache_creation_input_tokens ?? usage.cacheCreationInputTokens
+  );
+  const cacheRead = toNumber(usage.cache_read_input_tokens ?? usage.cacheReadInputTokens);
+  if (cached === undefined) {
+    const sum = (cacheCreation ?? 0) + (cacheRead ?? 0);
+    if (sum > 0) cached = sum;
+  }
+  const reasoning = toNumber(usage.reasoning_tokens ?? usage.reasoningTokens);
+  const out: ExtractedUsage = {};
+  if (input !== undefined) out.input_tokens = input;
+  if (output !== undefined) out.output_tokens = output;
+  if (total !== undefined) out.total_tokens = total;
+  if (cached !== undefined) out.cached_input_tokens = cached;
+  if (reasoning !== undefined) out.reasoning_tokens = reasoning;
+  return Object.keys(out).length ? out : null;
+}
+
+function pickModelUsage(value: unknown): Record<string, unknown> | null {
+  if (!value || typeof value !== 'object') return null;
+  const entries = Object.values(value as Record<string, unknown>);
+  for (const entry of entries) {
+    if (entry && typeof entry === 'object') return entry as Record<string, unknown>;
+  }
+  return null;
+}
+
+function extractClaudeUsage(msg: ClaudeMessage): ExtractedUsage | null {
+  const usage =
+    msg.usage ??
+    msg.message?.usage ??
+    msg.event?.usage ??
+    msg.delta?.usage ??
+    (msg as { token_usage?: Record<string, unknown> }).token_usage ??
+    (msg as { tokenUsage?: Record<string, unknown> }).tokenUsage;
+  if (usage) return extractUsageFromValue(usage);
+  const resultRecord =
+    msg.result && typeof msg.result === 'object' ? (msg.result as Record<string, unknown>) : null;
+  const nestedUsage =
+    resultRecord?.usage ??
+    resultRecord?.token_usage ??
+    resultRecord?.tokenUsage ??
+    resultRecord?.token_usage;
+  if (nestedUsage) return extractUsageFromValue(nestedUsage);
+  const modelUsage = pickModelUsage(
+    msg.modelUsage ?? msg.message?.modelUsage ?? resultRecord?.modelUsage
+  );
+  return extractUsageFromValue(modelUsage);
+}
+
+function extractClaudeContextUsage(
+  msg: ClaudeMessage,
+  usage: ExtractedUsage | null
+): ExtractedContextUsage | null {
+  const context =
+    msg.context_usage ??
+    msg.contextUsage ??
+    msg.message?.context_usage ??
+    msg.message?.contextUsage ??
+    msg.event?.context_usage ??
+    msg.event?.contextUsage;
+  const resultRecord =
+    msg.result && typeof msg.result === 'object' ? (msg.result as Record<string, unknown>) : null;
+  const modelUsage = pickModelUsage(
+    msg.modelUsage ?? msg.message?.modelUsage ?? resultRecord?.modelUsage
+  );
+  const toNumber = (v: unknown): number | undefined => {
+    if (typeof v === 'number' && Number.isFinite(v)) return v;
+    if (typeof v === 'string' && v.trim()) {
+      const parsed = Number(v);
+      return Number.isFinite(parsed) ? parsed : undefined;
+    }
+    return undefined;
+  };
+  const toBoolean = (v: unknown): boolean | undefined =>
+    typeof v === 'boolean' ? v : undefined;
+  const contextWindow = toNumber(
+    (context as Record<string, unknown> | undefined)?.context_window ??
+      (context as Record<string, unknown> | undefined)?.contextWindow ??
+      (modelUsage as Record<string, unknown> | undefined)?.contextWindow ??
+      (modelUsage as Record<string, unknown> | undefined)?.context_window ??
+      (msg as { context_window?: unknown }).context_window ??
+      (msg as { contextWindow?: unknown }).contextWindow
+  );
+  let contextTokens = toNumber(
+    (context as Record<string, unknown> | undefined)?.context_tokens ??
+      (context as Record<string, unknown> | undefined)?.contextTokens ??
+      (msg as { context_tokens?: unknown }).context_tokens ??
+      (msg as { contextTokens?: unknown }).contextTokens
+  );
+  let contextCachedTokens = toNumber(
+    (context as Record<string, unknown> | undefined)?.context_cached_tokens ??
+      (context as Record<string, unknown> | undefined)?.contextCachedTokens ??
+      (msg as { context_cached_tokens?: unknown }).context_cached_tokens ??
+      (msg as { contextCachedTokens?: unknown }).contextCachedTokens
+  );
+  let contextRemainingTokens = toNumber(
+    (context as Record<string, unknown> | undefined)?.context_remaining_tokens ??
+      (context as Record<string, unknown> | undefined)?.contextRemainingTokens ??
+      (msg as { context_remaining_tokens?: unknown }).context_remaining_tokens ??
+      (msg as { contextRemainingTokens?: unknown }).contextRemainingTokens
+  );
+  const contextTruncated = toBoolean(
+    (context as Record<string, unknown> | undefined)?.context_truncated ??
+      (context as Record<string, unknown> | undefined)?.contextTruncated ??
+      (msg as { context_truncated?: unknown }).context_truncated ??
+      (msg as { contextTruncated?: unknown }).contextTruncated
+  );
+  if (contextCachedTokens === undefined) {
+    const cached =
+      toNumber((context as Record<string, unknown> | undefined)?.cache_creation_input_tokens) ??
+      toNumber((context as Record<string, unknown> | undefined)?.cacheCreationInputTokens) ??
+      toNumber((context as Record<string, unknown> | undefined)?.cache_read_input_tokens) ??
+      toNumber((context as Record<string, unknown> | undefined)?.cacheReadInputTokens);
+    if (cached !== undefined) contextCachedTokens = cached;
+  }
+  if (contextTokens === undefined) {
+    if (
+      usage?.input_tokens !== undefined &&
+      usage?.cached_input_tokens !== undefined
+    ) {
+      contextTokens = usage.input_tokens + usage.cached_input_tokens;
+    } else if (usage?.input_tokens !== undefined) {
+      contextTokens = usage.input_tokens;
+    }
+  }
+  if (contextCachedTokens === undefined && usage?.cached_input_tokens !== undefined) {
+    contextCachedTokens = usage.cached_input_tokens;
+  }
+  if (
+    contextRemainingTokens === undefined &&
+    contextWindow !== undefined &&
+    contextTokens !== undefined
+  ) {
+    contextRemainingTokens = Math.max(0, contextWindow - contextTokens);
+  }
+  const out: ExtractedContextUsage = {};
+  if (contextWindow !== undefined) out.context_window = contextWindow;
+  if (contextTokens !== undefined) out.context_tokens = contextTokens;
+  if (contextCachedTokens !== undefined) out.context_cached_tokens = contextCachedTokens;
+  if (contextRemainingTokens !== undefined) out.context_remaining_tokens = contextRemainingTokens;
+  if (contextTruncated !== undefined) out.context_truncated = contextTruncated;
+  return Object.keys(out).length ? out : null;
+}
+
+function mergeUsage(current: ExtractedUsage | null, next: ExtractedUsage): ExtractedUsage {
+  const out: ExtractedUsage = { ...(current ?? {}) };
+  if (next.input_tokens !== undefined) out.input_tokens = next.input_tokens;
+  if (next.output_tokens !== undefined) out.output_tokens = next.output_tokens;
+  if (next.total_tokens !== undefined) out.total_tokens = next.total_tokens;
+  if (next.cached_input_tokens !== undefined) out.cached_input_tokens = next.cached_input_tokens;
+  if (next.reasoning_tokens !== undefined) out.reasoning_tokens = next.reasoning_tokens;
+  return out;
+}
+
+function mergeContextUsage(
+  current: ExtractedContextUsage | null,
+  next: ExtractedContextUsage
+): ExtractedContextUsage {
+  const out: ExtractedContextUsage = { ...(current ?? {}) };
+  if (next.context_window !== undefined) out.context_window = next.context_window;
+  if (next.context_tokens !== undefined) out.context_tokens = next.context_tokens;
+  if (next.context_cached_tokens !== undefined)
+    out.context_cached_tokens = next.context_cached_tokens;
+  if (next.context_remaining_tokens !== undefined)
+    out.context_remaining_tokens = next.context_remaining_tokens;
+  if (next.context_truncated !== undefined) out.context_truncated = next.context_truncated;
+  return out;
 }
 
 function extractSessionId(msg: ClaudeMessage): string | null {
@@ -1157,6 +1374,11 @@ export function runClaudePrompt({
     let finalSessionId: string | null = null;
     let didFinalize = false;
     let sawError = false;
+    let usageEmitted = false;
+    let latestUsage: ExtractedUsage | null = null;
+    let latestContextUsage: ExtractedContextUsage | null = null;
+    let latestUsageDetail: ProviderDetail | undefined;
+    let latestContextUsageDetail: ProviderDetail | undefined;
     const toolBlocks = new Map<number, { id?: string; name?: string }>();
     const thinkingBlocks = new Set<number>();
 
@@ -1182,11 +1404,46 @@ export function runClaudePrompt({
     const emitError = (message: string): void => {
       if (sawError) return;
       sawError = true;
+      emitUsageIfAvailable();
       emit({ type: 'error', message });
     };
 
     const emitFinal = (text: string, providerDetail?: ProviderDetail): void => {
+      emitUsageIfAvailable();
       emit({ type: 'final', text, providerDetail });
+    };
+
+    const captureUsage = (msg: ClaudeMessage, providerDetail: ProviderDetail): void => {
+      const usage = extractClaudeUsage(msg);
+      if (usage) {
+        latestUsage = mergeUsage(latestUsage, usage);
+        latestUsageDetail = providerDetail;
+      }
+      const contextUsage = extractClaudeContextUsage(msg, latestUsage);
+      if (contextUsage) {
+        latestContextUsage = mergeContextUsage(latestContextUsage, contextUsage);
+        latestContextUsageDetail = providerDetail;
+      }
+    };
+
+    const emitUsageIfAvailable = (): void => {
+      if (usageEmitted) return;
+      if (!latestUsage && !latestContextUsage) return;
+      if (latestUsage) {
+        emit({
+          type: 'usage',
+          usage: latestUsage,
+          providerDetail: latestUsageDetail,
+        });
+      }
+      if (latestContextUsage) {
+        emit({
+          type: 'context_usage',
+          contextUsage: latestContextUsage,
+          providerDetail: latestContextUsageDetail ?? latestUsageDetail,
+        });
+      }
+      usageEmitted = true;
     };
 
     const handleLine = (line: string): void => {
@@ -1204,6 +1461,8 @@ export function runClaudePrompt({
 
       const msgType = String(msg.type ?? '');
       let handled = false;
+      const detail = buildProviderDetail(msgType || 'unknown', {}, msg);
+      captureUsage(msg, detail);
 
       if (msgType === 'assistant' || msgType === 'user' || msgType === 'system') {
         const role =
@@ -1220,7 +1479,7 @@ export function runClaudePrompt({
           role,
           content,
           contentParts: rawContent ?? null,
-          providerDetail: buildProviderDetail(msgType, {}, msg),
+          providerDetail: detail,
         });
         handled = true;
       }
@@ -1336,7 +1595,7 @@ export function runClaudePrompt({
         emit({
           type: 'delta',
           text: delta,
-          providerDetail: buildProviderDetail(msgType || 'delta', {}, msg),
+          providerDetail: detail,
         });
         return;
       }
@@ -1347,7 +1606,7 @@ export function runClaudePrompt({
         emit({
           type: 'delta',
           text: assistant,
-          providerDetail: buildProviderDetail(msgType || 'assistant', {}, msg),
+          providerDetail: detail,
         });
         return;
       }
@@ -1355,7 +1614,7 @@ export function runClaudePrompt({
       const result = extractResultText(msg);
       if (result && !didFinalize && !sawError) {
         didFinalize = true;
-        emitFinal(aggregated || result, buildProviderDetail('result', {}, msg));
+        emitFinal(aggregated || result, detail);
         handled = true;
       }
 
@@ -1363,7 +1622,7 @@ export function runClaudePrompt({
         emit({
           type: 'detail',
           provider: 'claude',
-          providerDetail: buildProviderDetail(msgType || 'unknown', {}, msg),
+          providerDetail: detail,
         });
       }
     };
@@ -1381,6 +1640,9 @@ export function runClaudePrompt({
         } else if (!sawError) {
           emitFinal(aggregated);
         }
+      }
+      if (!usageEmitted) {
+        emitUsageIfAvailable();
       }
       resolve({ sessionId: finalSessionId });
     });

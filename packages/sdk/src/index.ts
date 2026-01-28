@@ -38,6 +38,22 @@ export type ModelInfo = {
   defaultReasoningEffort?: string;
 };
 
+export type TokenUsage = {
+  input_tokens?: number;
+  output_tokens?: number;
+  total_tokens?: number;
+  cached_input_tokens?: number;
+  reasoning_tokens?: number;
+};
+
+export type ContextUsage = {
+  context_window?: number;
+  context_tokens?: number;
+  context_cached_tokens?: number;
+  context_remaining_tokens?: number;
+  context_truncated?: boolean;
+};
+
 export type ProviderDetailLevel = 'minimal' | 'raw';
 
 export type ProviderDetail = {
@@ -72,7 +88,13 @@ export type SessionEvent =
     }
   | {
       type: 'usage';
-      usage: Record<string, number>;
+      usage: TokenUsage;
+      providerSessionId?: string | null;
+      providerDetail?: ProviderDetail;
+    }
+  | {
+      type: 'context_usage';
+      contextUsage: ContextUsage;
       providerSessionId?: string | null;
       providerDetail?: ProviderDetail;
     }
@@ -141,6 +163,11 @@ export type ProviderLoginOptions = {
   loginExperience?: 'embedded' | 'terminal';
 };
 
+export type SummaryOptions = {
+  mode?: 'auto' | 'off' | 'force';
+  prompt?: string;
+};
+
 export type AgentConnectConnectOptions = {
   host?: string;
   preferInjected?: boolean;
@@ -160,6 +187,7 @@ export type SessionCreateOptions = {
   maxTokens?: number;
   topP?: number;
   providerDetailLevel?: ProviderDetailLevel;
+  summary?: SummaryOptions;
 };
 
 export type SessionSendOptions = {
@@ -167,6 +195,7 @@ export type SessionSendOptions = {
   cwd?: string;
   repoRoot?: string;
   providerDetailLevel?: ProviderDetailLevel;
+  summary?: SummaryOptions;
 };
 
 export type SessionResumeOptions = {
@@ -177,6 +206,7 @@ export type SessionResumeOptions = {
   cwd?: string;
   repoRoot?: string;
   providerDetailLevel?: ProviderDetailLevel;
+  summary?: SummaryOptions;
 };
 
 export interface AgentConnectSession {
@@ -549,7 +579,8 @@ class AgentConnectSessionImpl implements AgentConnectSession {
       'metadata' in candidate ||
       'cwd' in candidate ||
       'repoRoot' in candidate ||
-      'providerDetailLevel' in candidate
+      'providerDetailLevel' in candidate ||
+      'summary' in candidate
     ) {
       return candidate;
     }
@@ -642,7 +673,15 @@ class AgentConnectClientImpl implements AgentConnectClient {
     if (type === 'usage') {
       return {
         type: 'usage',
-        usage: (data?.usage as Record<string, number>) ?? {},
+        usage: (data?.usage as TokenUsage) ?? {},
+        providerSessionId,
+        ...(providerDetail && { providerDetail }),
+      };
+    }
+    if (type === 'context_usage') {
+      return {
+        type: 'context_usage',
+        contextUsage: (data?.contextUsage as ContextUsage) ?? {},
         providerSessionId,
         ...(providerDetail && { providerDetail }),
       };

@@ -153,6 +153,22 @@ export interface ModelInfo {
   defaultReasoningEffort?: string;
 }
 
+export type TokenUsage = {
+  input_tokens?: number;
+  output_tokens?: number;
+  total_tokens?: number;
+  cached_input_tokens?: number;
+  reasoning_tokens?: number;
+};
+
+export type ContextUsage = {
+  context_window?: number;
+  context_tokens?: number;
+  context_cached_tokens?: number;
+  context_remaining_tokens?: number;
+  context_truncated?: boolean;
+};
+
 export interface ProviderLoginOptions {
   baseUrl?: string;
   apiKey?: string;
@@ -167,6 +183,7 @@ export interface SessionEvent {
     | 'delta'
     | 'final'
     | 'usage'
+    | 'context_usage'
     | 'status'
     | 'error'
     | 'raw_line'
@@ -181,8 +198,8 @@ export interface SessionEvent {
   provider?: ProviderId;
   providerDetail?: ProviderDetail;
   providerSessionId?: string | null;
-  inputTokens?: number;
-  outputTokens?: number;
+  usage?: TokenUsage;
+  contextUsage?: ContextUsage;
   role?: 'system' | 'user' | 'assistant';
   content?: string;
   contentParts?: unknown;
@@ -249,6 +266,11 @@ export interface SessionState {
   repoRoot?: string;
   providerDetailLevel?: ProviderDetailLevel;
   systemPrompt?: string;
+  summaryMode?: 'auto' | 'off';
+  summaryPrompt?: string;
+  summaryNextMode?: 'auto' | 'off' | 'force';
+  summaryNextPrompt?: string;
+  summaryAutoUsed?: boolean;
   summaryRequested?: boolean;
   summarySeed?: string;
   summaryReasoning?: string;
